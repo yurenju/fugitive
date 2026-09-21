@@ -11,7 +11,7 @@
   // Remove once stage 2 adds an API for registering User keys. CHALLENGE_SECRET is a secret, not set here.
   "vars": {
     "USER_NAME": "yurenju",
-    "USER_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPeLr73gx9mk+jwdYi6QHYu/XnNpJNN/VXFzXadKVhSi"
+    "USER_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICvzlUx482dpo0JHKvi7HQsQ/2ecNaj3Lgo4gNH0eEIm claude-agent@fugitive-dev"
   },
   "durable_objects": {
     "bindings": [{ "name": "REPOSITORY", "class_name": "Repository" }]
