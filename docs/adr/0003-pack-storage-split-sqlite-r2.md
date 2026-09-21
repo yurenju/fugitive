@@ -16,4 +16,4 @@ git push 時，client 會把伺服器還沒有的物件打成一個 pack 送上�
 - git push 預設送 thin pack：pack 裡的 delta 可以拿伺服器上別的 pack 裡的物件當底稿。原樣保存就代表讀物件時要能跨 pack 解 delta，而且底稿可能在 SQLite，也可能在 R2。
 - R2 不在 SQLite 的 transaction 裡，所以大 push 的順序必須是：pack 寫進 R2 → 寫目錄 → 在 transaction 裡確認 ref 還指在預期的物件上才移動它。push 處理失敗時會把它留下的東西清掉；但如果是 Worker 在中途當掉，R2 裡的 pack 會留著沒人用，目前不清理。當掉時寫到一半的目錄紀錄不會被當成存在的物件（pack 要建完目錄、通過連通性檢查才算完整），下一次 push 開始時清掉。
 - 目前也不做 GC：刪分支或 force push 之後，沒人用的物件和 pack 還是佔著空間。
-- R2 bucket 要事先手動建好。部署一個綁了 R2 的 Worker 只需要那個 Worker 的權限，所以部署用的 token 不必給 R2 權限（一開始以為要給，查 Cloudflare 的權限文件後更正）。
+- R2 bucket `fugitive-packs` 要事先在 Cloudflare 後台手動建好，部署不會替我們建。

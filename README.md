@@ -28,14 +28,10 @@ A local `wrangler dev` needs `CHALLENGE_SECRET=<any string>` in `.dev.vars`.
 
 ## Deployment
 
-Pushing to `main` runs the tests on GitHub Actions and then `wrangler deploy`. CI only updates an existing Worker; it never creates the Worker or the R2 bucket, so create both once by hand first:
+Deployment runs on Cloudflare Workers Builds: the `fugitive` Worker is connected to this repository in the Cloudflare dashboard, and Cloudflare builds and deploys every push to `main`. GitHub Actions only runs the tests, so a failing test does not stop a deploy; check that CI is green before merging. No Cloudflare credentials are stored on GitHub.
 
-1. In the Cloudflare dashboard, create the R2 bucket `fugitive-packs`.
-2. Create a Worker named `fugitive` (any starter, e.g. Hello World); CI replaces its code on the first deploy.
-3. Create an account-owned API token scoped to that one Worker with the **Editor** role. Deploying a Worker with an R2 binding needs no R2 permission on the token.
+One-time setup in the Cloudflare dashboard:
 
-Required repository secrets:
-
-- `CLOUDFLARE_API_TOKEN`: the token from step 3.
-- `CLOUDFLARE_ACCOUNT_ID`: the account the Worker lives in.
-- `CHALLENGE_SECRET`: the secret the server uses to MAC its challenges; any random string.
+1. Create the R2 bucket `fugitive-packs`.
+2. Create a Worker named `fugitive` (it must match `name` in `wrangler.jsonc`), then under **Settings → Builds** connect this repository with branch `main` and deploy command `npx wrangler deploy`.
+3. Under the Worker's **Settings → Variables and Secrets**, add the secret `CHALLENGE_SECRET` (any random string, e.g. `openssl rand -base64 32`). It is the secret the server uses to MAC its challenges and survives later deploys.

@@ -20,23 +20,3 @@ jobs:
       # Real git against a local wrangler dev; the script generates its own keys, so no secrets are needed.
       - run: npm run test:e2e
 
-  deploy:
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    concurrency: deploy
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          secrets: |
-            CHALLENGE_SECRET
-        env:
-          CHALLENGE_SECRET: ${{ secrets.CHALLENGE_SECRET }}
