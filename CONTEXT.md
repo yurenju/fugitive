@@ -1,32 +1,34 @@
 # Fugitive
 
-A multi-user git host built on Cloudflare. Standard `git` clients clone and push over HTTPS; agents will later browse files and run git operations through MCP.
+架在 Cloudflare 上、給多人使用的 git 主機。一般的 `git` 指令就能透過 HTTPS clone 和 push；之後 agent 也能透過 MCP 瀏覽檔案、執行 git 操作。
 
-## Language
+## 名詞
 
-### People
+程式碼裡的命名一律用括號中的英文名稱。
 
-**User**:
-A person with an account on this git host. Anyone may eventually register; at first only emails on the Registration allowlist can.
-_Avoid_: Account, member, customer
+### 人
 
-**Registration allowlist**:
-The list of email addresses permitted to register as a User. Registration from any other email is refused.
-_Avoid_: Whitelist, invite list, beta list
+**使用者 (User)**：
+在這台 git 主機上有帳號的人。將來開放給任何人註冊，一開始只有註冊白名單上的 email 能註冊。
+_避免使用_：帳號 (Account)、會員 (Member)、客戶 (Customer)
 
-**User key**:
-An Ed25519 public key, written in OpenSSH format, that a User registers to prove who they are. The User keeps the private half; the host never sees it. A User may register several User keys, but each User key belongs to exactly one User.
-_Avoid_: SSH key (nothing here speaks SSH), deploy key, API key
+**註冊白名單 (Registration Allowlist)**：
+可以註冊成為使用者的 email 清單。不在清單上的 email 一律不能註冊。
+_避免使用_：Whitelist、邀請名單 (Invite List)、測試名單 (Beta List)
 
-### Repositories
+**使用者金鑰 (User Key)**：
+使用者登記在這裡、用來證明自己身分的公鑰，格式是 OpenSSH 的 Ed25519 公鑰。私鑰只在使用者自己手上，主機從頭到尾都看不到。一個使用者可以登記好幾把，但每一把只能屬於一個使用者。
+_避免使用_：SSH 金鑰 (SSH Key，這裡沒有任何東西走 SSH)、部署金鑰 (Deploy Key)、API 金鑰 (API Key)
 
-**Repository**:
-A git repository hosted here, reachable by a standard `git` client over HTTPS.
-_Avoid_: Repo (in docs and code names), project
+### 儲存庫
 
-**Owner**:
-The User a Repository belongs to; its name is the first segment of the Repository's URL (`/<owner>/<repository>.git`). Organizations will later share this same namespace.
-_Avoid_: Namespace (as a noun for the thing itself), author
+**儲存庫 (Repository)**：
+放在這台主機上的 git 儲存庫，一般的 `git` 指令透過 HTTPS 就能存取。
+_避免使用_：Repo（文件和程式碼命名裡都不用）、專案 (Project)
 
-**Private repository**:
-A Repository only its Owner can read or write. Every Repository is private for now.
+**擁有者 (Owner)**：
+儲存庫所屬的那個使用者。網址 `/<owner>/<repository>.git` 的第一段就是擁有者的名字。之後的組織也會共用這一段命名空間。
+_避免使用_：Namespace（不拿來稱呼擁有者本身）、作者 (Author)
+
+**私有儲存庫 (Private Repository)**：
+只有擁有者能讀寫的儲存庫。目前所有儲存庫都是私有的。

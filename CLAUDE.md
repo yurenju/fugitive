@@ -1,13 +1,13 @@
-## Agent skills
+## Agent skills 的設定
 
 ### Issue tracker
 
-Issues live in GitHub Issues for `yurenju/fugitive` (via `gh`). See `docs/agents/issue-tracker.md`.
+issue 放在 GitHub 的 `yurenju/fugitive`，一律用 `gh` 操作。細節見 `docs/agents/issue-tracker.md`。
 
-### Triage labels
+### Triage 標籤
 
-Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+用預設的五個標籤：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`。各自的意思見 `docs/agents/triage-labels.md`。
 
-### Domain docs
+### 領域文件
 
-Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+整個 repo 只有一個領域：名詞定義在根目錄的 `CONTEXT.md`，決策紀錄放在 `docs/adr/`。細節見 `docs/agents/domain.md`。
