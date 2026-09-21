@@ -1,4 +1,4 @@
-// git 物件：hash、delta 還原、從 commit／tree／tag 取出它引用的物件。
+// git objects: hashing, applying deltas, and finding what a commit/tree/tag references.
 import { createHash } from "node:crypto";
 
 export type ObjectType = "commit" | "tree" | "blob" | "tag";
@@ -37,7 +37,7 @@ export function bytesToHex(bytes: Uint8Array): string {
   return s;
 }
 
-/** pack 裡每個物件前面的標頭：型別 3 bits + 長度的變長編碼。 */
+/** The header before each object in a pack: 3 type bits + variable-length size. */
 export function packEntryHeader(typeCode: number, size: number): Uint8Array {
   const bytes: number[] = [];
   let byte = (typeCode << 4) | (size & 0x0f);
@@ -53,7 +53,7 @@ export function packEntryHeader(typeCode: number, size: number): Uint8Array {
 
 export class DeltaError extends Error {}
 
-/** 把 delta 套到底稿上，還原出完整的物件內容。 */
+/** Apply a delta to its base to get the full object. */
 export function applyDelta(base: Uint8Array, delta: Uint8Array): Uint8Array {
   let pos = 0;
   const varint = () => {
@@ -100,7 +100,7 @@ export interface Commit {
   parents: string[];
 }
 
-/** commit 的標頭一行一行，到第一個空行為止。 */
+/** Header lines of a commit or tag, up to the first blank line. */
 function headerLines(data: Uint8Array): string[] {
   const text = decoder.decode(data);
   const blank = text.indexOf("\n\n");
@@ -147,12 +147,12 @@ export function parseTree(data: Uint8Array): TreeEntry[] {
   return entries;
 }
 
-/** submodule（gitlink）指到的是別的儲存庫的 commit，不算這個儲存庫的物件。 */
+/** A submodule (gitlink) points at a commit in another repository, not an object of this one. */
 export function isGitlink(mode: string): boolean {
   return mode === "160000";
 }
 
-/** 這個物件引用了哪些物件（連通性檢查用）。 */
+/** Objects this object references (for the connectivity check). */
 export function referencedOids(type: ObjectType, data: Uint8Array): string[] {
   switch (type) {
     case "commit": {

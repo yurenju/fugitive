@@ -1,13 +1,13 @@
-// 一個儲存庫的資料（ADR 0003）：pack 原樣保存，小的放 SQLite、大的放 R2；
-// SQLite 另外記「目錄」（每個物件在哪個 pack 的哪個位置）和 ref。
+// A Repository's data (ADR 0003): pushed packs are kept as-is, small ones in SQLite and large ones in R2.
+// SQLite also holds the index (which pack and offset each object is at) and the refs.
 import { Inflate, inflate } from "pako";
 import { applyDelta, CODE_TYPE, type ObjectType } from "./objects";
 
-/** pack 在 SQLite 裡切成 1 MB 一列；讀的時候兩邊都以 1 MB 為單位。 */
+/** Packs are stored in SQLite as 1 MB rows; reads use 1 MB blocks for both backends. */
 export const BLOCK_SIZE = 1024 * 1024;
-/** 有 Content-Length 而且比這個小的 push，pack 放 SQLite。 */
+/** A push with a Content-Length below this stores its pack in SQLite. */
 export const SQLITE_PACK_LIMIT = 16 * 1024 * 1024;
-/** R2 multipart 每一段的大小（除了最後一段，每段要一樣大）。 */
+/** R2 multipart part size (every part but the last must be the same size). */
 const R2_PART_SIZE = 8 * 1024 * 1024;
 
 const BLOCK_CACHE_BLOCKS = 16;
@@ -18,11 +18,11 @@ export type PackLocation = "sqlite" | "r2";
 export type ObjectRow = {
   oid: string;
   pack_id: number;
-  /** 還原之後的型別（1–4） */
+  /** Resolved object type (1–4) */
   type: number;
-  /** pack 裡記的型別：1–4，或 6（ofs-delta）、7（ref-delta） */
+  /** Type as stored in the pack: 1–4, or 6 (ofs-delta), 7 (ref-delta) */
   entry_type: number;
-  /** pack 標頭裡的長度（delta 的話是 delta 資料的長度） */
+  /** Size from the pack entry header (for a delta, the size of the delta data) */
   entry_size: number;
   data_offset: number;
   data_len: number;
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS push_references (oid TEXT PRIMARY KEY);
 `;
 
-/** 用 Map 的插入順序做的 LRU，依 byte 數限制大小。 */
+/** An LRU built on Map insertion order, bounded by total bytes. */
 class Lru<V> {
   private map = new Map<string, { value: V; size: number }>();
   private total = 0;
@@ -89,13 +89,13 @@ export class Store {
   private blocks = new Lru<Uint8Array>(BLOCK_CACHE_BLOCKS * BLOCK_SIZE);
   private objects = new Lru<GitObject>(OBJECT_CACHE_BYTES);
   private packInfo = new Map<number, { location: PackLocation; size: number }>();
-  /** 正在建目錄的 pack。它的物件在建目錄時就要查得到（delta 的底稿），但還不算完整。 */
+  /** The pack being indexed. Its objects must be visible while indexing (as delta bases) but it is not complete yet. */
   private indexing = -1;
 
   constructor(
     private storage: DurableObjectStorage,
     private bucket: R2Bucket,
-    /** R2 key 的前綴，用 Durable Object 的 id 分開各個儲存庫 */
+    /** R2 key prefix; the Durable Object id keeps Repositories apart */
     private prefix: string,
   ) {
     this.sql = storage.sql;
@@ -137,9 +137,9 @@ export class Store {
     this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('HEAD', ?)", ref);
   }
 
-  // ---- 目錄 ----
-  // 只有「完整」的 pack（建完目錄、通過連通性檢查）裡的物件才算存在。
-  // push 做到一半當掉時留下的目錄紀錄不算，下一次 push 開始時清掉。
+  // ---- index ----
+  // Only objects in complete packs (fully indexed and connectivity-checked) exist.
+  // Index rows left by a push that died midway don't count; the next push clears them.
 
   row(oid: string): ObjectRow | undefined {
     return this.sql
@@ -161,7 +161,7 @@ export class Store {
     return t === undefined ? undefined : CODE_TYPE[t];
   }
 
-  /** 開始替一個 pack 建目錄：清掉之前當掉的 push 留下的紀錄（R2 上的 pack 本身不清）。 */
+  /** Start indexing a pack: clear rows left by pushes that died (their packs in R2 stay). */
   startIndexing(packId: number) {
     const stale = this.sql.exec<{ id: number }>("SELECT id FROM packs WHERE complete = 0 AND id != ?", packId).toArray();
     for (const { id } of stale) {
@@ -188,12 +188,12 @@ export class Store {
     );
   }
 
-  /** 記下這個 pack 裡的物件引用到的物件，最後一次檢查是否都存在。 */
+  /** Record an object referenced from this pack; they are all checked for existence at the end. */
   addReference(oid: string) {
     this.sql.exec("INSERT OR IGNORE INTO push_references (oid) VALUES (?)", oid);
   }
 
-  /** 連通性檢查通過就把 pack 標成完整；回傳第一個找不到的物件，全部都在就回傳 undefined。 */
+  /** Mark the pack complete if connectivity holds; return the first missing object, or undefined. */
   finishIndexing(packId: number): string | undefined {
     const missing = this.sql
       .exec<{ oid: string }>(
@@ -209,7 +209,7 @@ export class Store {
     return missing;
   }
 
-  // ---- pack 的內容 ----
+  // ---- pack bytes ----
 
   private pack(packId: number) {
     let info = this.packInfo.get(packId);
@@ -248,7 +248,7 @@ export class Store {
     return data;
   }
 
-  /** 從 offset 開始、到那個 1 MB 區塊結尾為止的 bytes。 */
+  /** Bytes from offset to the end of its 1 MB block. */
   async readFrom(packId: number, offset: number): Promise<Uint8Array> {
     if (offset >= this.pack(packId).size) return new Uint8Array(0);
     const block = await this.block(packId, Math.floor(offset / BLOCK_SIZE));
@@ -269,8 +269,8 @@ export class Store {
   }
 
   /**
-   * 從 offset 開始解壓一段 zlib 資料。壓縮後的長度事先不知道，
-   * 所以一個區塊一個區塊餵進去，直到 zlib 說結束；回傳實際吃掉的 bytes 數。
+   * Inflate a zlib stream starting at offset. Its compressed length isn't known up front,
+   * so feed it block by block until zlib reports the end; return how many bytes it consumed.
    */
   async inflateAt(
     packId: number,
@@ -287,17 +287,17 @@ export class Store {
       pos += chunk.length;
     }
     if (inf.err) throw new StoreError(`zlib: ${inf.msg}`);
-    // pako 的型別沒有公開 strm，但它就是 zlib 的 z_stream；total_in 是吃掉的壓縮 bytes 數。
+    // pako's types hide strm, but it is zlib's z_stream; total_in is the compressed bytes consumed.
     const consumed = (inf as unknown as { strm: { total_in: number } }).strm.total_in;
     return { data: onData ? new Uint8Array(0) : inf.result, consumed };
   }
 
-  /** 這個物件在 pack 裡的原始壓縮資料。 */
+  /** The object's raw compressed data in its pack. */
   async raw(row: ObjectRow): Promise<Uint8Array> {
     return this.read(row.pack_id, row.data_offset, row.data_len);
   }
 
-  /** 同上，但一個區塊一個區塊交出來（clone 時直接複製，大物件也不必整個放進記憶體）。 */
+  /** Same, yielded block by block (clones copy it as-is without holding a large object in memory). */
   async *rawChunks(row: ObjectRow): AsyncGenerator<Uint8Array> {
     let done = 0;
     while (done < row.data_len) {
@@ -309,13 +309,13 @@ export class Store {
     }
   }
 
-  // ---- 讀物件 ----
+  // ---- reading objects ----
 
   remember(oid: string, obj: GitObject) {
     this.objects.set(oid, obj, obj.data.length);
   }
 
-  // ponytail: 整個物件放進記憶體；單一物件大到幾十 MB 時會吃緊，到時改成串流還原。
+  // ponytail: holds the whole object in memory; tight for single objects of tens of MB, stream it then.
   async load(oid: string): Promise<GitObject> {
     const cached = this.objects.get(oid);
     if (cached) return cached;
@@ -334,9 +334,9 @@ export class Store {
     return obj;
   }
 
-  // ---- 寫 pack ----
+  // ---- writing packs ----
 
-  /** 開一個新的 pack 並回傳寫入器。放哪裡由呼叫的人依大小決定。 */
+  /** Create a pack and return its writer. The caller picks the location by size. */
   async createPack(location: PackLocation): Promise<PackWriter> {
     const id = this.sql.exec<{ id: number }>("INSERT INTO packs (location, size) VALUES (?, 0) RETURNING id", location).one().id;
     return location === "sqlite" ? new SqlitePackWriter(this, id) : new R2PackWriter(this, id, this.bucket);
@@ -347,7 +347,7 @@ export class Store {
     this.packInfo.delete(packId);
   }
 
-  /** 一次 push 失敗時，把它留下的東西清掉（能清多少清多少）。 */
+  /** Clean up what a failed push left behind (best effort). */
   async discardPack(packId: number) {
     const location = this.sql.exec<{ location: string }>("SELECT location FROM packs WHERE id = ?", packId).toArray()[0]?.location;
     for (const { oid } of this.sql.exec<{ oid: string }>("SELECT oid FROM objects WHERE pack_id = ?", packId).toArray()) {
@@ -365,7 +365,7 @@ export class Store {
 export interface PackWriter {
   readonly id: number;
   write(chunk: Uint8Array): Promise<void>;
-  /** 寫完，回傳總長度。 */
+  /** Finish writing; returns the total size. */
   close(): Promise<number>;
   abort(): Promise<void>;
 }
@@ -447,7 +447,7 @@ class R2PackWriter implements PackWriter {
 
   async close() {
     if (!this.upload) {
-      // 整個 pack 不到一段，直接 put 就好。
+      // The whole pack fits in one part, so a plain put will do.
       await this.bucket.put(this.store.r2Key(this.id), this.buf.slice(0, this.filled));
     } else {
       await this.flush();

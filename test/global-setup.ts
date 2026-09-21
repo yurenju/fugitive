@@ -1,4 +1,4 @@
-// 在 Node 裡跑一次：產生測試用的使用者金鑰，並用真的 git 產生 pack 測資，交給 Worker 裡的測試。
+// Runs once in Node: generate the test User keys and pack fixtures with real git, for the tests in the Worker.
 import { execFileSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -7,16 +7,16 @@ import { join } from "node:path";
 import type { TestProject } from "vitest/node";
 
 export interface Fixtures {
-  /** OpenSSH 格式的公鑰那一行 */
+  /** Public key line in OpenSSH format */
   userKey: string;
-  /** PKCS#8（base64），測試裡用 WebCrypto 簽章 */
+  /** PKCS#8 (base64), for signing with WebCrypto in the tests */
   userPrivateKey: string;
   strangerPrivateKey: string;
   strangerKey: string;
   commits: string[];
-  /** 第 1–2 個 commit 的完整 pack */
+  /** Full pack of commits 1–2 */
   basePack: string;
-  /** 第 3 個 commit 的 thin pack，delta 的底稿在 basePack 裡 */
+  /** Thin pack of commit 3; its delta bases are in basePack */
   thinPack: string;
 }
 
@@ -51,7 +51,7 @@ export default function setup(project: TestProject) {
         input: "",
       });
     git("init", "-q", "-b", "main");
-    // 一個夠長的檔案，改一行之後 git 會用 delta 存。
+    // A file long enough that git stores a one-line change as a delta.
     const lines = Array.from({ length: 400 }, (_, i) => `line ${i} of a file that is long enough to delta`);
     const commits: string[] = [];
     for (let round = 0; round < 3; round++) {

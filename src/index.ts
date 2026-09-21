@@ -1,4 +1,4 @@
-// Worker：路由與驗證，通過之後交給那個儲存庫的 Durable Object。
+// Worker: routing and authentication; authenticated requests go to the Repository's Durable Object.
 import { AuthError, authenticate, issueChallenge, publicKeyBlob, type Mode, type User } from "./auth";
 import { HELPER, installScript } from "./scripts";
 
@@ -9,7 +9,7 @@ const GIT_PATH = new RegExp(`^/(${NAME})/(${NAME})\\.git/(info/refs|git-upload-p
 const SERVICES = new Set(["git-upload-pack", "git-receive-pack"]);
 
 function configuredUsers(env: Env): User[] {
-  // 第一段還沒有註冊與登入：設定裡寫著一個使用者和他的一把使用者金鑰。
+  // Stage 1 has no registration or login: the config holds one User and one User key.
   return [{ name: env.USER_NAME, keyBlob: publicKeyBlob(env.USER_KEY) }];
 }
 
@@ -46,7 +46,7 @@ export default {
         now,
         users,
       });
-      // Private repository：只有擁有者能讀寫。
+      // Private repository: only the Owner can read or write.
       if (user.name !== owner) throw new AuthError("not the owner");
     } catch (e) {
       if (!(e instanceof AuthError)) throw e;

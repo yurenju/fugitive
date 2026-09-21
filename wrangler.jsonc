@@ -4,11 +4,11 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-22",
   "compatibility_flags": ["nodejs_compat"],
-  // push 時最先碰到的限制是 CPU（見 #3 的研究），開到平台允許的最大值。
+  // CPU is the first limit a push hits (see the research in #3), so raise it to the platform maximum.
   "limits": { "cpu_ms": 300000 },
   "observability": { "enabled": true },
-  // 第一段還沒有註冊與登入：這裡放一個使用者和他的一把使用者金鑰（公鑰）。
-  // 第二段有了登記使用者金鑰的 API 之後拿掉。CHALLENGE_SECRET 是 secret，不放這裡。
+  // Stage 1 has no registration or login: one User and their User key (public key).
+  // Remove once stage 2 adds an API for registering User keys. CHALLENGE_SECRET is a secret, not set here.
   "vars": {
     "USER_NAME": "yurenju",
     "USER_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPeLr73gx9mk+jwdYi6QHYu/XnNpJNN/VXFzXadKVhSi"

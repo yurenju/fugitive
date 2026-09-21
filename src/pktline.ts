@@ -1,5 +1,5 @@
-// git 的 pkt-line 格式：每一行前面是 4 個十六進位字元的長度（含這 4 個字元）。
-// 0000 是 flush、0001 是 delim。
+// git's pkt-line format: each line starts with its length as 4 hex digits (including those 4).
+// 0000 is flush, 0001 is delim.
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -7,7 +7,7 @@ const decoder = new TextDecoder();
 export const FLUSH = encoder.encode("0000");
 export const DELIM = encoder.encode("0001");
 
-/** pkt-line 能放的最大資料量（65520 - 4）。 */
+/** Most data a single pkt-line can carry (65520 - 4). */
 export const MAX_PKT_DATA = 65516;
 
 export function pkt(data: string | Uint8Array): Uint8Array {
@@ -30,7 +30,7 @@ export function concat(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-/** side-band-64k 的一個封包：第一個 byte 是頻道（1 資料、2 進度、3 錯誤）。 */
+/** side-band-64k packets: the first byte is the band (1 data, 2 progress, 3 error). */
 export function sideband(band: 1 | 2 | 3, data: string | Uint8Array): Uint8Array[] {
   const bytes = typeof data === "string" ? encoder.encode(data) : data;
   const out: Uint8Array[] = [];
@@ -47,7 +47,7 @@ export function sideband(band: 1 | 2 | 3, data: string | Uint8Array): Uint8Array
 
 export type Packet = { kind: "flush" } | { kind: "delim" } | { kind: "data"; line: string; bytes: Uint8Array };
 
-/** 解析整段已經在記憶體裡的 pkt-line。 */
+/** Parse pkt-lines from a buffer that is already in memory. */
 export function parsePackets(buf: Uint8Array): { packets: Packet[]; rest: number } {
   const packets: Packet[] = [];
   let pos = 0;
@@ -75,8 +75,8 @@ export function parsePackets(buf: Uint8Array): { packets: Packet[]; rest: number
 export class ProtocolError extends Error {}
 
 /**
- * 從 request body 串流裡一邊讀 pkt-line，一邊把剩下的 bytes 交出去。
- * push 時前面是指令（pkt-line），後面緊接著 pack，所以要能在同一條串流上切換。
+ * Reads pkt-lines off a request body stream, then hands over the remaining bytes.
+ * A push is commands (pkt-lines) followed directly by the pack, so both happen on one stream.
  */
 export class StreamReader {
   private buf: Uint8Array = new Uint8Array(0);
@@ -93,7 +93,7 @@ export class StreamReader {
     return this.buf.length >= n;
   }
 
-  /** 讀一個 pkt-line；串流結束時回 null。 */
+  /** Read one pkt-line; null at end of stream. */
   async readPacket(): Promise<Packet | null> {
     if (!(await this.fill(4))) {
       if (this.buf.length) throw new ProtocolError("truncated pkt-line");
@@ -111,7 +111,7 @@ export class StreamReader {
     return { kind: "data", bytes, line: decoder.decode(bytes).replace(/\n$/, "") };
   }
 
-  /** 讀完 pkt-line 之後，剩下的原始 bytes。 */
+  /** The raw bytes left after the pkt-lines. */
   async *rest(): AsyncGenerator<Uint8Array> {
     if (this.buf.length) yield this.buf;
     this.buf = new Uint8Array(0);

@@ -1,5 +1,5 @@
-// git 連線的驗證，做法見 ADR 0002：
-// 伺服器在 401 出 challenge，helper 用使用者金鑰簽它，簽章當 Basic 的密碼送回來。
+// Authentication for git over HTTPS (ADR 0002): the server issues a challenge in its 401,
+// the helper signs it with the User key, and the signature comes back as the Basic password.
 import { concat } from "./pktline";
 
 export type Mode = "read" | "write";
@@ -44,12 +44,12 @@ interface ChallengePayload {
   /** `<owner>/<repository>` */
   r: string;
   m: Mode;
-  /** 發出的時間（Unix 秒，伺服器時間） */
+  /** Issue time (Unix seconds, server clock) */
   t: number;
   n: string;
 }
 
-/** challenge = base64url(JSON 內容 ‖ HMAC)。裡面不會有 `.`，所以能直接放進密碼字串。 */
+/** challenge = base64url(JSON payload ‖ HMAC). It never contains `.`, so it fits in the password string as is. */
 export async function issueChallenge(secret: string, repository: string, mode: Mode, now: number): Promise<string> {
   const nonce = base64url(crypto.getRandomValues(new Uint8Array(12)));
   const payload = encoder.encode(JSON.stringify({ r: repository, m: mode, t: now, n: nonce } satisfies ChallengePayload));
@@ -68,14 +68,14 @@ async function checkChallenge(secret: string, challenge: string, repository: str
   if (!(await crypto.subtle.verify("HMAC", await hmacKey(secret), mac, payload))) {
     throw new AuthError("challenge was not issued by this server");
   }
-  // 檢查碼對了，內容就是這台伺服器自己產生的 JSON。
+  // The MAC matched, so this is JSON this server produced itself.
   const c = JSON.parse(decoder.decode(payload)) as ChallengePayload;
   if (c.r !== repository) throw new AuthError("challenge is for another repository");
   if (c.m !== mode) throw new AuthError(`challenge is for ${c.m}, not ${mode}`);
   if (now - c.t > CHALLENGE_TTL_SECONDS || c.t > now + 60) throw new AuthError("challenge expired");
 }
 
-/** 讀 SSH wire format 的 string（uint32 長度 + 內容）。 */
+/** Reads SSH wire-format strings (uint32 length + bytes). */
 class SshReader {
   pos = 0;
   constructor(private buf: Uint8Array) {}
@@ -106,7 +106,7 @@ function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
-/** OpenSSH 公鑰那一行（`ssh-ed25519 AAAA... 註解`）裡的 key blob。 */
+/** The key blob inside an OpenSSH public key line (`ssh-ed25519 AAAA... comment`). */
 export function publicKeyBlob(line: string): Uint8Array {
   const [type, b64] = line.trim().split(/\s+/);
   if (type !== "ssh-ed25519" || !b64) throw new Error("user key must be an ssh-ed25519 public key");
@@ -114,8 +114,8 @@ export function publicKeyBlob(line: string): Uint8Array {
 }
 
 /**
- * 驗一個 SSHSIG 簽章（`ssh-keygen -Y sign` 的輸出，格式見 OpenSSH 的 PROTOCOL.sshsig），
- * 回傳簽章裡帶的公鑰 blob。
+ * Verify an SSHSIG signature (the output of `ssh-keygen -Y sign`; format in OpenSSH's PROTOCOL.sshsig)
+ * and return the public key blob it carries.
  */
 export async function verifySshSig(sig: Uint8Array, message: Uint8Array, namespace: string): Promise<Uint8Array> {
   const r = new SshReader(sig);
@@ -150,7 +150,7 @@ export async function verifySshSig(sig: Uint8Array, message: Uint8Array, namespa
     const key = await crypto.subtle.importKey("raw", rawKey, { name: "Ed25519" }, false, ["verify"]);
     valid = await crypto.subtle.verify({ name: "Ed25519" }, key, rawSig, signed);
   } catch {
-    valid = false; // 長度不對的公鑰或簽章
+    valid = false; // key or signature of the wrong length
   }
   if (!valid) throw new AuthError("bad signature");
   return publicKey;
@@ -162,8 +162,8 @@ export interface User {
 }
 
 /**
- * 驗 Authorization header，通過就回傳是哪個使用者。
- * 密碼字串是 `fgt1.<challenge>.<base64url(SSHSIG)>`；Basic 的 username 欄位不看。
+ * Check the Authorization header and return the User it belongs to.
+ * The password is `fgt1.<challenge>.<base64url(SSHSIG)>`; the Basic username is ignored.
  */
 export async function authenticate(
   authorization: string | null,

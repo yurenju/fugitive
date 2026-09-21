@@ -17,7 +17,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      # 真的 git 對本機 wrangler dev；金鑰是腳本當下產生的，不需要任何秘密。
+      # Real git against a local wrangler dev; the script generates its own keys, so no secrets are needed.
       - run: npm run test:e2e
 
   deploy:

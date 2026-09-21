@@ -1,5 +1,5 @@
-// 在測試裡直接對 Worker 送 HTTP 請求，測真的 git 很難刻意製造的情況。
-// 用的 pack 是 global-setup 用真的 git 產生的。
+// Send HTTP requests straight to the Worker to test cases real git can't easily produce.
+// The packs come from real git, generated in global-setup.
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, inject, it } from "vitest";
@@ -25,7 +25,7 @@ function sshString(data: Uint8Array | string): Uint8Array {
   return out;
 }
 
-/** 做出跟 `ssh-keygen -Y sign` 一樣格式的 SSHSIG 簽章。 */
+/** Produce an SSHSIG signature in the same format as `ssh-keygen -Y sign`. */
 async function sshsig(message: string, pkcs8: string, publicLine: string, namespace = NAMESPACE): Promise<Uint8Array> {
   const key = await crypto.subtle.importKey("pkcs8", b64(pkcs8), { name: "Ed25519" }, false, ["sign"]);
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-512", encoder.encode(message)));
@@ -60,7 +60,7 @@ function call(path: string, init: RequestInit = {}): Promise<Response> {
   return exports.default.fetch(new Request(`${ORIGIN}${path}`, init));
 }
 
-/** 解開 side-band 回應，拿到頻道 1 裡的 pkt-line。 */
+/** Unwrap a side-band response into the pkt-lines on band 1. */
 function unband(body: Uint8Array): string[] {
   const inner = parsePackets(body)
     .packets.filter((p) => p.kind === "data" && p.bytes[0] === 1)
@@ -72,7 +72,7 @@ function unband(body: Uint8Array): string[] {
 
 interface PushOptions {
   atomic?: boolean;
-  /** 不帶 Content-Length，模擬 git 的 chunked 傳送（pack 會放 R2） */
+  /** No Content-Length, like git's chunked uploads (the pack goes to R2) */
   stream?: boolean;
   auth?: string;
 }
@@ -134,7 +134,7 @@ describe("routing and authentication", () => {
     const header = res.headers.get("WWW-Authenticate")!;
     const challenge = /^Basic realm="fugitive", challenge="([A-Za-z0-9_-]+)"$/.exec(header)?.[1];
     expect(challenge).toBeTruthy();
-    // helper 簽的就是這一段
+    // this is exactly what the helper signs
     const ok = await call("/tester/a.git/info/refs?service=git-upload-pack", {
       headers: { Authorization: await credentials("tester/a", "read", { challenge }) },
     });
@@ -285,7 +285,7 @@ describe("review fixes", () => {
   it("reports a pack with a valid checksum but corrupt zlib data as an unpack error", async () => {
     const repository = fresh();
     const corrupt = basePack.slice();
-    // 第一個物件的壓縮資料從第 14 個 byte 左右開始，弄壞 zlib 的標頭。
+    // The first object's compressed data starts around byte 14; break its zlib header.
     corrupt[14] ^= 0xff;
     corrupt[15] ^= 0xff;
     const body = corrupt.subarray(0, corrupt.length - 20);
@@ -298,7 +298,7 @@ describe("review fixes", () => {
   it("does not trust objects from a push that died before finishing", async () => {
     const repository = fresh();
     await push(repository, [`${ZERO_OID} ${c1} refs/heads/main`], basePack);
-    // 模擬 push 建目錄到一半就當掉：pack 還沒被標成完整。
+    // Simulate a push that died while indexing: the pack was never marked complete.
     const stub = env.REPOSITORY.getByName(`tester/${repository}`);
     await runInDurableObject(stub, (_instance, state) => {
       state.storage.sql.exec("UPDATE packs SET complete = 0");
@@ -307,7 +307,7 @@ describe("review fixes", () => {
       "unpack ok",
       "ng refs/heads/other missing object",
     ]);
-    // 下一個真的帶 pack 的 push 會清掉殘留、重新收進來。
+    // The next push that carries a pack clears the leftovers and takes the objects in again.
     expect(await push(repository, [`${ZERO_OID} ${c1} refs/heads/other`], basePack)).toEqual([
       "unpack ok",
       "ok refs/heads/other",

@@ -1,32 +1,34 @@
 # fugitive
 
-架在 Cloudflare Workers 上的 git 主機。用一般的 `git` 指令透過 HTTPS clone 與 push；驗證用使用者自己的 Ed25519 金鑰簽章，伺服器不發 token（見 [ADR 0002](docs/adr/0002-user-key-signatures-as-http-credentials.md)）。
+A git host on Cloudflare Workers. Clone and push with plain `git` over HTTPS; you authenticate by signing with your own Ed25519 key, and the server never issues tokens (see [ADR 0002](docs/adr/0002-user-key-signatures-as-http-credentials.md)).
 
-## 使用
+> **Most of the documentation is in Traditional Chinese**: the design decisions in [`docs/adr/`](docs/adr), the domain glossary in [`CONTEXT.md`](CONTEXT.md), agent instructions in [`CLAUDE.md`](CLAUDE.md), and the project's issues and pull requests. Code, comments and this README are in English.
+
+## Usage
 
 ```sh
-curl -fsSL https://<主機>/install.sh | sh
-git clone https://<主機>/<owner>/<repository>.git
+curl -fsSL https://<host>/install.sh | sh
+git clone https://<host>/<owner>/<repository>.git
 ```
 
-需要 git 2.41 以上（helper 要從 git 拿到伺服器的 challenge）。安裝指令會放好 credential helper，並只替這台主機寫 git 設定。helper 用 ssh-agent 裡第一把 Ed25519 金鑰，沒有的話用 `~/.ssh/id_ed25519`；要指定別把，設 `git config --global fugitive.key <路徑>`。
+Requires git 2.41 or newer (the helper needs git to pass on the server's challenge). The installer puts a credential helper in place and writes git config for this host only. The helper signs with the first Ed25519 key in ssh-agent, falling back to `~/.ssh/id_ed25519`; to pick another key, set `git config --global fugitive.key <path>`.
 
-目前（第一段）還沒有註冊與登入：`wrangler.jsonc` 的 `USER_NAME` 與 `USER_KEY` 就是唯一的使用者和他的公鑰，這個名字底下任何名字的儲存庫都可以直接 push。
+Stage 1 has no registration or login yet: `USER_NAME` and `USER_KEY` in `wrangler.jsonc` are the only User and their public key, and any repository name under that User can be pushed to directly.
 
-## 開發
+## Development
 
 ```sh
 npm install
 npm run typecheck
-npm test          # 在 workerd 裡對 Worker 送 HTTP 請求
-npm run test:e2e  # 起 wrangler dev，用真的 git 跑驗收清單
+npm test          # HTTP requests straight to the Worker, inside workerd
+npm run test:e2e  # starts wrangler dev and runs the acceptance list with real git
 ```
 
-本機的 `wrangler dev` 需要 `.dev.vars` 裡有 `CHALLENGE_SECRET=<任意字串>`。
+A local `wrangler dev` needs `CHALLENGE_SECRET=<any string>` in `.dev.vars`.
 
-## 部署
+## Deployment
 
-push 到 `main` 時 GitHub Actions 會跑完測試再 `wrangler deploy`。需要的 repo secrets：
+Pushing to `main` runs the tests on GitHub Actions and then `wrangler deploy`. Required repository secrets:
 
-- `CLOUDFLARE_API_TOKEN`：要有 Workers 與 R2 的編輯權限（R2 bucket `fugitive-packs`）。
-- `CHALLENGE_SECRET`：伺服器替 challenge 算檢查碼用的秘密，隨機產生一段即可。
+- `CLOUDFLARE_API_TOKEN`: needs edit access to Workers and R2 (R2 bucket `fugitive-packs`).
+- `CHALLENGE_SECRET`: the secret the server uses to MAC its challenges; any random string.

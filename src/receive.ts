@@ -1,4 +1,4 @@
-// push（receive-pack）：收 pack、建目錄、檢查連通性，最後才移動 ref。
+// push (receive-pack): receive the pack, index it, check connectivity, and only then move refs.
 import { createHash } from "node:crypto";
 import {
   applyDelta,
@@ -17,9 +17,9 @@ import {
 import { concat, FLUSH, pkt, ProtocolError, sideband, StreamReader } from "./pktline";
 import { SQLITE_PACK_LIMIT, type Store } from "./store";
 
-/** Cloudflare 對 request body 的上限；超過的在平台那層就會被擋，這裡再保險一次。 */
+/** Cloudflare's request body limit; the platform rejects larger bodies first, this is a backstop. */
 export const MAX_PUSH_BYTES = 100 * 1024 * 1024;
-/** 比這個大的 blob 解壓時只算 hash、不留在記憶體裡。 */
+/** Blobs larger than this are hashed while inflating and not kept in memory. */
 const KEEP_LIMIT = 4 * 1024 * 1024;
 
 export const RECEIVE_CAPABILITIES = "report-status delete-refs side-band-64k ofs-delta atomic object-format=sha1";
@@ -32,7 +32,7 @@ export interface Command {
 
 export class UnpackError extends Error {}
 
-/** 依 git check-ref-format 的規則檢查 ref 名稱。 */
+/** Check a ref name against git check-ref-format's rules. */
 export function isValidRefName(name: string): boolean {
   if (!name.startsWith("refs/") || name.endsWith("/") || name.endsWith(".") || name.includes("..")) return false;
   if (name.includes("@{") || name.includes("//") || /[\x00-\x20\x7f~^:?*[\\]/.test(name)) return false;
@@ -50,9 +50,9 @@ interface Entry {
 }
 
 /**
- * 把 push 的 pack 收進來：先原樣存好並驗 checksum，
- * 再從存好的地方一個物件一個物件讀回來，算出 oid、寫進目錄。
- * 回傳 pack 的 id；pack 是空的（例如只刪分支）就回傳 null。
+ * Take in a pushed pack: store it as-is and verify its checksum, then read it back object by
+ * object to compute oids and write the index.
+ * Returns the pack id, or null when there is no pack (e.g. a delete-only push).
  */
 export async function ingestPack(
   store: Store,
@@ -60,7 +60,7 @@ export async function ingestPack(
   contentLength: number | undefined,
   yieldEvery: () => Promise<void> = async () => {},
 ): Promise<number | null> {
-  // 第一步：存 bytes，同時算 checksum（最後 20 bytes 是 checksum 本身，不算進去）。
+  // Step 1: store the bytes while computing the checksum (the last 20 bytes are the checksum itself).
   const location = contentLength !== undefined && contentLength < SQLITE_PACK_LIMIT ? "sqlite" : "r2";
   const writer = await store.createPack(location);
   const sha = createHash("sha1");
@@ -127,7 +127,7 @@ async function indexPack(store: Store, packId: number, end: number, yieldEvery: 
     if (data) store.remember(oid, { type, data });
   };
 
-  /** delta 的底稿找得到就還原並記下來；找不到就回傳 false，留到後面再試。 */
+  /** Resolve and record a delta if its base is available; otherwise return false to retry later. */
   const resolveDelta = async (entry: Entry, delta: Uint8Array | null): Promise<boolean> => {
     const baseOid = entry.baseOid ?? oidAt.get(entry.baseOffset!);
     if (!baseOid || !store.has(baseOid)) return false;
@@ -143,7 +143,7 @@ async function indexPack(store: Store, packId: number, end: number, yieldEvery: 
     return true;
   };
 
-  // 第二步：照順序掃一遍。
+  // Step 2: one pass in pack order.
   let pos = 12;
   for (let i = 0; i < count; i++) {
     if (pos >= end) throw new UnpackError("pack has fewer objects than its header says");
@@ -183,7 +183,7 @@ async function indexPack(store: Store, packId: number, end: number, yieldEvery: 
     } else {
       const type = CODE_TYPE[entryType];
       if (type === "blob" && size > KEEP_LIMIT) {
-        // 大 blob：邊解壓邊算 hash，不整個留在記憶體。
+        // Large blob: hash while inflating instead of keeping it in memory.
         const hash = createHash("sha1").update(objectHeader(type, size));
         let got = 0;
         const { consumed } = await store.inflateAt(packId, entry.dataOffset, (chunk) => {
@@ -205,9 +205,9 @@ async function indexPack(store: Store, packId: number, end: number, yieldEvery: 
   }
   if (pos !== end) throw new UnpackError("pack has trailing garbage");
 
-  // 第三步：底稿之前還沒出現的 delta，反覆試到沒有進展為止。
-  // thin pack 的底稿在伺服器上別的 pack 裡，store.has() 找得到，第二步就解掉了；
-  // 留到這裡的是底稿排在同一個 pack 後面的。
+  // Step 3: retry deltas whose base hadn't appeared yet, until no progress is made.
+  // Thin-pack bases live in other packs on the server, so store.has() finds them in step 2;
+  // what's left here are deltas whose base comes later in the same pack.
   let remaining = pending;
   while (remaining.length) {
     const next: Entry[] = [];
@@ -219,8 +219,8 @@ async function indexPack(store: Store, packId: number, end: number, yieldEvery: 
     remaining = next;
   }
 
-  // 連通性：這個 pack 裡的物件引用到的東西，都要在這個儲存庫裡。
-  // 之前存進來的物件已經檢查過，所以不必往下走。
+  // Connectivity: everything referenced by objects in this pack must exist in this Repository.
+  // Objects from earlier complete packs were already checked, so there is no need to walk further.
   const missing = store.finishIndexing(packId);
   if (missing) throw new UnpackError(`missing object ${missing}`);
 }
@@ -232,8 +232,10 @@ function parseCommand(line: string): Command {
 }
 
 /**
- * 移動 ref 的唯一入口：ref 還指在預期的物件上才准移動（之後 MCP 的 commit 也走這裡）。
- * atomic 時先全部檢查過，全部通過才一起寫。回傳每條 ref 的結果，null 代表成功。
+ * The single entry point for moving refs: a ref only moves if it still points at the expected object
+ * (MCP commits will go through here too). With atomic, every ref is checked first and they are
+ * written together only if all pass.
+ * Returns each ref's result; null means success.
  */
 export function updateRefs(store: Store, commands: Command[], atomic: boolean): Map<string, string | null> {
   const result = new Map<string, string | null>();
@@ -256,7 +258,7 @@ export function updateRefs(store: Store, commands: Command[], atomic: boolean): 
       store.setRef(cmd.ref, cmd.new === ZERO_OID ? null : cmd.new);
       result.set(cmd.ref, null);
     }
-    // 空儲存庫第一次 push：有推 main 就讓 HEAD 指向 main，否則指向這次推的第一條分支。
+    // First push to an empty Repository: HEAD points at main if it was pushed, else at the first branch pushed.
     if (!store.head()) {
       const created = commands.filter((c) => result.get(c.ref) === null && c.new !== ZERO_OID && c.ref.startsWith("refs/heads/"));
       const head = created.find((c) => c.ref === "refs/heads/main") ?? created[0];
@@ -285,8 +287,8 @@ export async function receivePack(
       caps = new Set(line.slice(nul + 1).trim().split(" "));
       line = line.slice(0, nul);
     }
-    // shallow clone push 時會附上自己的 shallow 邊界。伺服器有完整的歷史，所以不需要它；
-    // 新的物件引用到伺服器沒有的東西時，連通性檢查會擋下來。
+    // A shallow clone sends its shallow boundary when pushing. The server has full history and doesn't
+    // need it; if new objects reference something the server lacks, the connectivity check rejects them.
     if (line.startsWith("shallow ")) continue;
     commands.push(parseCommand(line));
   }
@@ -296,7 +298,7 @@ export async function receivePack(
     try {
       await ingestPack(store, reader.rest(), contentLength, yieldEvery);
     } catch (e) {
-      // 壞掉的 pack 不管錯在哪一層，都照協定回報給 git，而不是變成 HTTP 500。
+      // Whatever layer a bad pack fails in, report it to git through the protocol rather than as HTTP 500.
       unpackError = e instanceof Error ? e.message : String(e);
     }
   } else {

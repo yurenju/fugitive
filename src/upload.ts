@@ -1,4 +1,4 @@
-// clone／fetch（upload-pack），v0 與 v2。
+// clone/fetch (upload-pack), protocol v0 and v2.
 import { createHash } from "node:crypto";
 import { deflate } from "pako";
 import {
@@ -21,7 +21,7 @@ export const UPLOAD_CAPABILITIES_V0 =
   "multi_ack_detailed side-band-64k ofs-delta shallow deepen-relative include-tag no-progress object-format=sha1";
 export const V2_CAPABILITIES = ["version 2", AGENT, "ls-refs=unborn", "fetch=shallow", "object-format=sha1"];
 
-/** v0 的 deepen 用這個數字代表「全部」（`git fetch --unshallow`）。 */
+/** v0 deepen uses this number to mean "everything" (`git fetch --unshallow`). */
 const INFINITE_DEPTH = 0x7fffffff;
 
 interface FetchRequest {
@@ -50,7 +50,7 @@ class Walker {
     return c;
   }
 
-  /** 沿著 tag 往下剝，回傳途中的 tag 物件和最後指到的物件。 */
+  /** Peel tags; return the tag objects along the way and the final target. */
   async peel(oid: string): Promise<{ tags: string[]; target: string }> {
     const tags: string[] = [];
     while (this.store.typeOf(oid) === "tag") {
@@ -67,7 +67,7 @@ interface Selection {
   unshallow: string[];
 }
 
-/** 決定要送哪些物件：wants 能走到、而 client 手上還沒有的。 */
+/** Pick the objects to send: reachable from wants and not already on the client. */
 async function select(store: Store, req: FetchRequest): Promise<Selection> {
   const walk = new Walker(store);
   const wantCommits: string[] = [];
@@ -89,7 +89,7 @@ async function select(store: Store, req: FetchRequest): Promise<Selection> {
     else if (type === "blob") add(target);
   }
 
-  // shallow：新的邊界在哪、哪些原本的邊界要往下補。
+  // shallow: where the new boundary is, and which old boundaries get deepened.
   const shallowNew = new Set<string>();
   const unshallow: string[] = [];
   const extraWants: string[] = [];
@@ -117,11 +117,11 @@ async function select(store: Store, req: FetchRequest): Promise<Selection> {
     }
   }
   const unshallowed = new Set(unshallow);
-  /** client 那邊這個 commit 沒有 parent（原本的 shallow 邊界，或這次新的邊界）。 */
+  /** On the client this commit has no parents (an old shallow boundary, or the new one). */
   const cutOff = (oid: string) => shallowNew.has(oid) || (req.clientShallow.has(oid) && !unshallowed.has(oid));
 
-  // client 已經有的 commit。client 的 shallow 邊界以下它沒有，所以不往下走。
-  // ponytail: 每次都走完 haves 的整段歷史；儲存庫大到這裡變慢時，改成照 commit 時間同時走兩邊。
+  // Commits the client already has. It has nothing below its shallow boundary, so stop there.
+  // ponytail: walks the whole history behind haves every time; once that gets slow, walk both sides by commit date.
   const theirs = new Set<string>();
   const stack = req.haves.filter((o) => store.typeOf(o) === "commit");
   while (stack.length) {
@@ -132,7 +132,7 @@ async function select(store: Store, req: FetchRequest): Promise<Selection> {
     for (const p of (await walk.commit(oid)).parents) if (store.has(p)) stack.push(p);
   }
 
-  // 要送的 commit。
+  // Commits to send.
   const commits: string[] = [];
   const boundary = new Set<string>();
   const seen = new Set<string>();
@@ -150,7 +150,7 @@ async function select(store: Store, req: FetchRequest): Promise<Selection> {
     if (!cutOff(oid)) todo.push(...(await walk.commit(oid)).parents);
   }
 
-  // tree 和 blob：client 手上那幾個 commit 的 tree 裡有的就不送。
+  // Trees and blobs: skip anything in the trees of commits the client has.
   const excluded = new Set<string>();
   const walkTree = async (oid: string, visit: (oid: string) => boolean) => {
     if (!visit(oid)) return;
@@ -174,7 +174,7 @@ async function select(store: Store, req: FetchRequest): Promise<Selection> {
   for (const c of commits) await walkTree((await walk.commit(c)).tree, include);
   for (const t of rootTrees) await walkTree(t, include);
 
-  // include-tag：附註 tag 指到的東西這次有送，就把 tag 一起送。
+  // include-tag: send annotated tags whose target is being sent.
   if (req.includeTag) {
     for (const [name, oid] of store.refs()) {
       if (!name.startsWith("refs/tags/") || sending.has(oid)) continue;
@@ -191,8 +191,8 @@ async function select(store: Store, req: FetchRequest): Promise<Selection> {
 }
 
 /**
- * 組 pack。原本就不是 delta 的物件，直接複製 pack 裡的壓縮資料；
- * delta 的底稿這次也有送的話，改寫成 ref-delta 照樣複製；其他的還原成完整物件再壓縮。
+ * Build the pack. Non-delta objects copy their compressed data straight from storage; deltas whose
+ * base is also being sent are copied as ref-deltas; everything else is resolved and recompressed.
  */
 async function* packStream(store: Store, oids: string[]): AsyncGenerator<Uint8Array> {
   const sha = createHash("sha1");
@@ -225,10 +225,10 @@ async function* packStream(store: Store, oids: string[]): AsyncGenerator<Uint8Ar
   yield new Uint8Array(sha.digest());
 }
 
-/** 把 pack 包進 side-band（頻道 1），順便在頻道 2 送進度訊息。 */
+/** Wrap the pack in side-band (band 1), with progress messages on band 2. */
 async function* sidebandPack(store: Store, objects: string[], progress: boolean): AsyncGenerator<Uint8Array> {
   if (progress) yield* sideband(2, `Enumerating objects: ${objects.length}, done.\n`);
-  // 小塊合併起來再送，避免每個物件都變成一個封包。
+  // Batch small chunks so each object doesn't become its own packet.
   let buf: Uint8Array[] = [];
   let size = 0;
   for await (const chunk of packStream(store, objects)) {
@@ -249,7 +249,7 @@ function checkWants(store: Store, wants: string[]) {
   for (const w of wants) if (!isOid(w) || !store.has(w)) throw new ProtocolError(`not our ref ${w}`);
 }
 
-/** 找出 haves 裡伺服器也有的 commit。 */
+/** The haves that are commits the server also has. */
 function commonCommits(store: Store, haves: string[]): string[] {
   return haves.filter((h) => store.typeOf(h) === "commit");
 }
@@ -302,7 +302,7 @@ export async function* uploadPackV0(store: Store, packets: Packet[]): AsyncGener
   }
 
   const sel = req.depth !== undefined || req.done ? await select(store, req) : undefined;
-  // 無狀態的 HTTP 上，client 每一輪都重送 deepen，所以每一輪的回應都先附上 shallow 清單。
+  // Over stateless HTTP the client resends deepen every round, so every response starts with the shallow list.
   if (req.depth !== undefined) yield* [...shallowLines(sel!), FLUSH];
   if (!hasHaveSection) return;
 

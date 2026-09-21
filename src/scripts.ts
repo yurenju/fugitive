@@ -1,8 +1,9 @@
-// 使用者電腦上跑的兩支 shell script：credential helper 和安裝指令。
+// The two shell scripts that run on the user's machine: the credential helper and the installer.
 
 /**
- * git credential helper。git 要帳密時會帶著 401 回應裡的 WWW-Authenticate（wwwauth[]）來問它；
- * 它從裡面取出 challenge，用使用者金鑰簽，簽章當 Basic 的密碼交回去。
+ * git credential helper. When git needs credentials it passes along the 401's WWW-Authenticate
+ * (wwwauth[]); the helper takes the challenge from it, signs it with the User key, and returns the
+ * signature as the Basic password.
  */
 export const HELPER = `#!/bin/sh
 # fugitive git credential helper — https://github.com/yurenju/fugitive
@@ -45,7 +46,7 @@ echo "username=fugitive"
 echo "password=fgt1.$challenge.$sig"
 `;
 
-/** `curl <origin>/install.sh | sh`：裝好 helper，只替這台主機寫 git 設定。 */
+/** `curl <origin>/install.sh | sh`: install the helper and write git config for this host only. */
 export function installScript(origin: string): string {
   return `#!/bin/sh
 set -e
@@ -55,7 +56,7 @@ mkdir -p "$dir"
 curl -fsSL "$origin/git-credential-fugitive" -o "$dir/git-credential-fugitive"
 chmod +x "$dir/git-credential-fugitive"
 
-# 空的 helper 先清掉 Keychain 這類會把簽章當密碼存起來的 helper，再接上我們的。
+# An empty helper first clears helpers like Keychain that would store the signature as a password; then add ours.
 git config --global --unset-all "credential.$origin.helper" || true
 git config --global --add "credential.$origin.helper" ""
 git config --global --add "credential.$origin.helper" "$dir/git-credential-fugitive"

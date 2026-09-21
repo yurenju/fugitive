@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 端對端測試：起本機的 wrangler dev，用真的 git 指令跑第一段的驗收清單。
-# 用法：test/e2e.sh（需要 git、ssh-keygen、curl）
+# End-to-end tests: start a local wrangler dev and run stage 1's acceptance list with real git.
+# Usage: test/e2e.sh (needs git, ssh-keygen, curl)
 set -euo pipefail
 
 PORT=${PORT:-8791}
@@ -11,7 +11,7 @@ LOG="$WORK/wrangler.log"
 pass=0
 
 cleanup() {
-  # wrangler 底下還有 workerd，整個 process group 一起停掉。
+  # wrangler runs workerd underneath, so stop the whole process group.
   [ -n "${SERVER:-}" ] && kill -- "-$SERVER" 2>/dev/null || true
   wait 2>/dev/null || true
   rm -rf "$WORK"
@@ -29,13 +29,13 @@ ok() {
   echo "ok $pass - $*"
 }
 
-# ---- 測試用的使用者與金鑰（每次重新產生） ----
+# ---- test User and keys (generated fresh each run) ----
 KEYS="$WORK/keys"
 mkdir -p "$KEYS"
 ssh-keygen -q -t ed25519 -N '' -C tester -f "$KEYS/tester"
 ssh-keygen -q -t ed25519 -N '' -C stranger -f "$KEYS/stranger"
 
-# ---- 起伺服器 ----
+# ---- start the server ----
 if curl -s -o /dev/null "$ORIGIN/"; then
   echo "port $PORT is already in use; set PORT to another value" >&2
   exit 1
@@ -50,7 +50,7 @@ for _ in $(seq 1 120); do
 done
 curl -fs "$ORIGIN/install.sh" >/dev/null || fail "wrangler dev did not start"
 
-# ---- 使用者的電腦：獨立的 HOME，沒有 ssh-agent ----
+# ---- the user's machine: its own HOME, no ssh-agent ----
 export HOME="$WORK/home"
 mkdir -p "$HOME/.ssh"
 cp "$KEYS/tester" "$HOME/.ssh/id_ed25519"
@@ -75,12 +75,12 @@ commit() { # commit <dir> <file> <content>
   git -C "$1" commit -qm "$2: $3"
 }
 
-# 1. clone 空儲存庫
+# 1. clone an empty repository
 git clone -q "$R/empty.git" empty 2>/dev/null || fail "clone empty repository"
 [ -z "$(git -C empty rev-parse --all)" ] || fail "empty clone has refs"
 ok "clone an empty repository"
 
-# 2. push 新分支，再 clone，fsck 通過、內容一致
+# 2. push a new branch, clone it, fsck passes and content matches
 git init -q src
 for i in 1 2 3; do commit src "file$i.txt" "hello $i"; done
 mkdir -p src/dir/sub && commit src dir/sub/nested.txt nested
@@ -94,13 +94,13 @@ git -C clone1 fsck --strict --no-progress || fail "fsck of clone"
 [ "$(git -C clone1 symbolic-ref HEAD)" = refs/heads/main ] || fail "clone did not check out main"
 ok "push a new branch and clone it back (fsck, content, tag, HEAD)"
 
-# 同一件事用 v0 協定再做一次
+# the same with protocol v0
 git -c protocol.version=0 clone -q "$R/project.git" clone-v0 || fail "clone with protocol v0"
 git -C clone-v0 fsck --strict --no-progress || fail "fsck of v0 clone"
 [ "$(git -C clone-v0 rev-parse HEAD)" = "$(git -C src rev-parse HEAD)" ] || fail "v0 clone HEAD differs"
 ok "clone with protocol v0"
 
-# 3. 增量 push，另一邊 fetch 拿得到（v2 與 v0 各一次）
+# 3. incremental push, fetched on the other side (v2 and v0)
 commit src file1.txt "changed"
 git -C src push -q origin main || fail "incremental push"
 git -C clone1 fetch -q origin || fail "incremental fetch"
@@ -116,13 +116,13 @@ git -C src push -q -f origin main || fail "force push"
 [ "$(git ls-remote "$R/project.git" refs/heads/main | cut -f1)" = "$(git -C src rev-parse main)" ] || fail "force push not applied"
 ok "force push"
 
-# 5. 刪分支
+# 5. delete a branch
 git -C src push -q origin main:refs/heads/feature || fail "push feature"
 git -C src push -q origin --delete feature || fail "delete branch"
 [ -z "$(git ls-remote "$R/project.git" refs/heads/feature)" ] || fail "branch still there"
 ok "delete a branch"
 
-# 6. atomic：一條過不了，其他也不動
+# 6. atomic: one ref rejected, none move
 git -C src push -q origin main:refs/heads/a main:refs/heads/b || fail "push a and b"
 git -C src push -q --atomic origin main:refs/heads/a main:refs/heads/c || fail "atomic push"
 commit src extra.txt "for a"
@@ -132,7 +132,7 @@ if git -C src push -q --atomic origin main:refs/heads/a stale:refs/heads/b 2>/de
 [ "$before" = "$(git ls-remote "$R/project.git")" ] || fail "atomic push changed refs"
 ok "atomic push: all or nothing"
 
-# 7. 兩個 push 同時改同一條分支，只有一個成功
+# 7. two concurrent pushes to one branch, only one wins
 git clone -q "$R/project.git" racer1 && git clone -q "$R/project.git" racer2
 commit racer1 race.txt one && commit racer2 race.txt two
 (if git -C racer1 push -q origin main 2>"$WORK/race1.err"; then echo 0; else echo 1; fi >"$WORK/race1") &
@@ -145,7 +145,7 @@ r1=$(cat "$WORK/race1") r2=$(cat "$WORK/race2")
 grep -qE "fetch first|rejected" "$WORK/race1.err" "$WORK/race2.err" || fail "loser got no clear rejection"
 ok "concurrent pushes to one branch: exactly one wins"
 
-# 8. shallow clone，之後補回歷史
+# 8. shallow clone, then restore history
 git -C src pull -q --rebase origin main 2>/dev/null || true
 git -C src push -q origin main
 total=$(git -C src rev-list --count main)
@@ -165,7 +165,7 @@ commit shallow-push shallow.txt "from a shallow clone"
 git -C shallow-push push -q origin main || fail "push from a shallow clone"
 ok "shallow clone, deepen, unshallow (v2 and v0), push from a shallow clone"
 
-# 9. 大約 50 MB 的 push（走 R2）
+# 9. a ~50 MB push (stored in R2)
 git init -q big
 for i in $(seq 1 10); do head -c 5000000 /dev/urandom >"big/blob$i.bin"; done
 git -C big add . && git -C big commit -qm big
@@ -173,7 +173,7 @@ git -C big push -q "$R/big.git" main || fail "50 MB push"
 git clone -q "$R/big.git" big-clone || fail "clone big repository"
 git -C big-clone fsck --strict --no-progress || fail "fsck of big clone"
 [ "$(git -C big-clone rev-parse HEAD^{tree})" = "$(git -C big rev-parse HEAD^{tree})" ] || fail "big clone differs"
-# thin pack：新的 delta 以存在 R2 裡的 blob 為底稿
+# thin pack: the new delta's base is a blob stored in R2
 head -c 100 /dev/urandom >>big/blob1.bin
 git -C big commit -qam "append to blob1"
 git -C big push -q "$R/big.git" main || fail "thin push on top of R2 pack"
@@ -181,7 +181,7 @@ git -C big-clone pull -q --ff-only || fail "fetch after thin push"
 git -C big-clone fsck --strict --no-progress || fail "fsck after thin push"
 ok "~50 MB push and clone, then a thin push on top"
 
-# 10. 沒裝 helper、或金鑰不在設定裡，都被拒
+# 10. no helper, or a key not in the config: rejected
 if git -c credential.helper= clone -q "$R/project.git" nohelper 2>/dev/null; then fail "clone without helper succeeded"; fi
 if git -c fugitive.key="$KEYS/stranger" clone -q "$R/project.git" stranger 2>/dev/null; then fail "clone with unknown key succeeded"; fi
 if git -C src -c fugitive.key="$KEYS/stranger" push -q origin main:refs/heads/x 2>/dev/null; then fail "push with unknown key succeeded"; fi
@@ -189,7 +189,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "$ORIGIN/someone-else/project.git/
 [ "$code" = 404 ] || fail "other owner returned $code"
 ok "no helper, unknown key, or other owner: rejected"
 
-# 11. 讀的簽章不能拿去 push
+# 11. a read signature cannot be used to push
 helper="$HOME/.local/share/fugitive/git-credential-fugitive"
 cat >"$WORK/capture" <<EOF
 #!/bin/sh

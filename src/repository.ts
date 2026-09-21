@@ -1,4 +1,4 @@
-// 一個儲存庫對應一個 Durable Object。驗證在 Worker 那層做完，進到這裡的請求都已經通過。
+// One Durable Object per Repository. The Worker has already authenticated every request that gets here.
 import { DurableObject } from "cloudflare:workers";
 import { ZERO_OID } from "./objects";
 import { concat, FLUSH, parsePackets, pkt, ProtocolError } from "./pktline";
@@ -6,12 +6,12 @@ import { receivePack, RECEIVE_CAPABILITIES } from "./receive";
 import { Store } from "./store";
 import { AGENT, UPLOAD_CAPABILITIES_V0, uploadPackV0, uploadPackV2, V2_CAPABILITIES } from "./upload";
 
-/** upload-pack 的 request 只有 want／have 這些短行，不該很大。 */
+/** upload-pack requests are just short want/have lines; they should never be large. */
 const MAX_UPLOAD_REQUEST = 10 * 1024 * 1024;
 
 export class Repository extends DurableObject<Env> {
   private store: Store;
-  /** 同一個儲存庫的 push 一個接一個處理，免得兩個 push 同時在寫目錄。 */
+  /** Pushes to one Repository run one at a time, so two pushes never write the index at once. */
   private pushes: Promise<unknown> = Promise.resolve();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -46,7 +46,7 @@ export class Repository extends DurableObject<Env> {
     }
   }
 
-  /** 大 push 每處理一批物件就讓出一下，並把寫入送出去，免得未寫出的資料一直堆在記憶體裡。 */
+  /** During a large push, yield after each batch and flush writes so unwritten data doesn't pile up in memory. */
   private async breathe() {
     await this.ctx.storage.sync();
     await new Promise((r) => setTimeout(r, 0));
@@ -80,7 +80,7 @@ function contentLength(request: Request): number | undefined {
   return v && !request.headers.get("Content-Encoding") ? Number(v) : undefined;
 }
 
-/** git 送 upload-pack 的 request 時，body 大於 1 KB 就會 gzip。 */
+/** git gzips upload-pack request bodies larger than 1 KB. */
 function decoded(request: Request): ReadableStream<Uint8Array> {
   const body = request.body ?? new ReadableStream({ start: (c) => c.close() });
   return request.headers.get("Content-Encoding") === "gzip" ? body.pipeThrough(new DecompressionStream("gzip")) : body;
@@ -98,8 +98,8 @@ async function readBody(request: Request, limit: number): Promise<Uint8Array> {
 }
 
 /**
- * 先跑到第一個 chunk，讓協定錯誤在回應開始之前就丟出來（變成 ERR），
- * 之後的部分再邊產生邊送。
+ * Run up to the first chunk so protocol errors surface before the response starts (and become ERR),
+ * then stream the rest as it is produced.
  */
 async function startStream(gen: AsyncGenerator<Uint8Array>): Promise<ReadableStream<Uint8Array>> {
   const first = await gen.next();
