@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "tsc",
     "dev": "wrangler dev",
     "typecheck": "tsc",
     "test": "vitest run",
