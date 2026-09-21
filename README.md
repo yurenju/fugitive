@@ -28,7 +28,14 @@ A local `wrangler dev` needs `CHALLENGE_SECRET=<any string>` in `.dev.vars`.
 
 ## Deployment
 
-Pushing to `main` runs the tests on GitHub Actions and then `wrangler deploy`. Required repository secrets:
+Pushing to `main` runs the tests on GitHub Actions and then `wrangler deploy`. CI only updates an existing Worker; it never creates the Worker or the R2 bucket, so create both once by hand first:
 
-- `CLOUDFLARE_API_TOKEN`: needs edit access to Workers and R2 (R2 bucket `fugitive-packs`).
+1. In the Cloudflare dashboard, create the R2 bucket `fugitive-packs`.
+2. Create a Worker named `fugitive` (any starter, e.g. Hello World); CI replaces its code on the first deploy.
+3. Create an account-owned API token scoped to that one Worker with the **Editor** role. Deploying a Worker with an R2 binding needs no R2 permission on the token.
+
+Required repository secrets:
+
+- `CLOUDFLARE_API_TOKEN`: the token from step 3.
+- `CLOUDFLARE_ACCOUNT_ID`: the account the Worker lives in.
 - `CHALLENGE_SECRET`: the secret the server uses to MAC its challenges; any random string.
