@@ -11,7 +11,7 @@ curl -fsSL https://<host>/install.sh | sh
 git clone https://<host>/<owner>/<repository>.git
 ```
 
-Requires git 2.41 or newer (the helper needs git to pass on the server's challenge). The installer puts a credential helper in place and writes git config for this host only. The helper signs with the first Ed25519 key in ssh-agent, falling back to `~/.ssh/id_ed25519`; to pick another key, set `git config --global fugitive.key <path>`.
+Requires git 2.41 or newer (the helper needs git to pass on the server's challenge). Ubuntu 24.04, Debian 13, Homebrew, Git for Windows and GitHub Actions runners qualify; Ubuntu 22.04, Debian 12 and Debian 12 based Docker images such as `node:24` do not (on Ubuntu, use `ppa:git-core/ppa`; on Debian, move to 13, e.g. `node:24-trixie`). Apple's git from older Command Line Tools is 2.39; use Homebrew's git if yours is older than 2.41. The installer puts a credential helper in place and writes git config for this host only. The helper signs with the first Ed25519 key in ssh-agent, falling back to `~/.ssh/id_ed25519`; to pick another key, set `git config --global fugitive.key <path>`.
 
 Stage 1 has no registration or login yet: `USER_NAME` and `USER_KEY` in `wrangler.jsonc` are the only User and their public key, and any repository name under that User can be pushed to directly.
 
