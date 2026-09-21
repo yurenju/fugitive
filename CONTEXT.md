@@ -15,7 +15,7 @@ The list of email addresses permitted to register as a User. Registration from a
 _Avoid_: Whitelist, invite list, beta list
 
 **User key**:
-An Ed25519 public key, written in OpenSSH format, that a User registers to prove who they are. The User keeps the private half; the host never sees it.
+An Ed25519 public key, written in OpenSSH format, that a User registers to prove who they are. The User keeps the private half; the host never sees it. A User may register several User keys, but each User key belongs to exactly one User.
 _Avoid_: SSH key (nothing here speaks SSH), deploy key, API key
 
 ### Repositories
