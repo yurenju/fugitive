@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fugitive",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  // CPU is the first limit a push hits (see the research in #3), so raise it to the platform maximum.
+  "limits": { "cpu_ms": 300000 },
+  "observability": { "enabled": true },
+  // Stage 1 has no registration or login: one User and their User key (public key).
+  // Remove once stage 2 adds an API for registering User keys. CHALLENGE_SECRET is a secret, not set here.
+  "vars": {
+    "USER_NAME": "yurenju",
+    "USER_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPeLr73gx9mk+jwdYi6QHYu/XnNpJNN/VXFzXadKVhSi"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "REPOSITORY", "class_name": "Repository" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Repository"] }],
+  "r2_buckets": [{ "binding": "PACKS", "bucket_name": "fugitive-packs" }]
+}
