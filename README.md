@@ -33,5 +33,5 @@ Deployment runs on Cloudflare Workers Builds: the `fugitive` Worker is connected
 One-time setup in the Cloudflare dashboard:
 
 1. Create the R2 bucket `fugitive-packs`.
-2. Create a Worker named `fugitive` (it must match `name` in `wrangler.jsonc`), then under **Settings → Builds** connect this repository with branch `main` and deploy command `npx wrangler deploy`.
+2. Create a Worker named `fugitive` (it must match `name` in `wrangler.jsonc`), then under **Settings → Builds** connect this repository with branch `main`, build command `npm run build` (a typecheck; a type error stops the deploy) and deploy command `npx wrangler deploy`.
 3. Under the Worker's **Settings → Variables and Secrets**, add the secret `CHALLENGE_SECRET` (any random string, e.g. `openssl rand -base64 32`). It is the secret the server uses to MAC its challenges and survives later deploys.
