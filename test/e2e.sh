@@ -101,6 +101,8 @@ sign_in() { # sign_in <email> [name]
 # ---- the user's machine: its own HOME, no stage 1 key ----
 export HOME="$WORK/home"
 mkdir -p "$HOME"
+# CI runners set these; the helper and installer would then write outside this HOME.
+unset XDG_CONFIG_HOME XDG_DATA_HOME
 export GIT_TERMINAL_PROMPT=0
 git config --global user.name Tester
 git config --global user.email tester@example.com
