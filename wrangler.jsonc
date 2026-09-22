@@ -7,15 +7,28 @@
   // CPU is the first limit a push hits (see the research in #3), so raise it to the platform maximum.
   "limits": { "cpu_ms": 300000 },
   "observability": { "enabled": true },
-  // Stage 1 has no registration or login: one User and their User key (public key).
-  // Remove once stage 2 adds an API for registering User keys. CHALLENGE_SECRET is a secret, not set here.
+  // The credential helper and installer are shell scripts in src/scripts, served as text.
+  "rules": [{ "type": "Text", "globs": ["**/*.sh"], "fallthrough": true }],
   "vars": {
-    "USER_NAME": "yurenju",
-    "USER_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICvzlUx482dpo0JHKvi7HQsQ/2ecNaj3Lgo4gNH0eEIm claude-agent@fugitive-dev"
+    // Tests point this at a fake Resend.
+    "RESEND_API_URL": "https://api.resend.com"
   },
+  // Set in the Cloudflare dashboard (or `wrangler secret put`). EMAIL_FROM is not secret, but the operator picks
+  // the sending domain, so it lives with the Resend key. REGISTRATION_ALLOWLIST: emails separated by commas or newlines.
+  "secrets": { "required": ["RESEND_API_KEY", "EMAIL_FROM", "REGISTRATION_ALLOWLIST", "SESSION_SECRET"] },
   "durable_objects": {
-    "bindings": [{ "name": "REPOSITORY", "class_name": "Repository" }]
+    "bindings": [
+      { "name": "REPOSITORY", "class_name": "RepositoryObject" },
+      { "name": "USERS", "class_name": "Users" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Repository"] }],
-  "r2_buckets": [{ "binding": "PACKS", "bucket_name": "fugitive-packs" }]
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Repository"] },
+    // Stage 1's Repositories were found by name; deleting the class deletes them and all their data (spec #24).
+    { "tag": "v2", "new_sqlite_classes": ["RepositoryObject", "Users"], "deleted_classes": ["Repository"] }
+  ],
+  // Created on deploy if missing. Stage 1's bucket, fugitive-packs, is emptied by a lifecycle rule and then deleted.
+  "r2_buckets": [{ "binding": "PACKS", "bucket_name": "fugitive-repositories" }],
+  // The OAuth package keeps clients, grants and tokens here (ADR 0005). Created on deploy.
+  "kv_namespaces": [{ "binding": "OAUTH_KV" }]
 }

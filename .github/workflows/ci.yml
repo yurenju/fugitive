@@ -17,6 +17,6 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      # Real git against a local wrangler dev; the script generates its own keys, so no secrets are needed.
+      # Real git against a local wrangler dev and a fake Resend; no secrets are needed.
       - run: npm run test:e2e
 
