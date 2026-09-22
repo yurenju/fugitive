@@ -194,7 +194,7 @@ describe("review fixes", () => {
     // Simulate a push that died while indexing: the pack was never marked complete.
     // Access tokens are `<user id>:<grant id>:<secret>`.
     const id = (await env.USERS.getByName("global").findRepository(owner.access_token.split(":")[0], repository))!;
-    const stub = env.REPOSITORY.get(env.REPOSITORY.idFromString(id));
+    const stub = env.REPOSITORIES.get(env.REPOSITORIES.idFromString(id));
     await runInDurableObject(stub, (_instance, state) => {
       state.storage.sql.exec("UPDATE packs SET complete = 0");
     });

@@ -83,8 +83,8 @@ export class RepositoryObject extends DurableObject<Env> {
 }
 
 /** The Durable Object of the Repository with this Repository ID. */
-export function repositoryObject(env: Pick<Env, "REPOSITORY">, id: string) {
-  return env.REPOSITORY.get(env.REPOSITORY.idFromString(id));
+export function repositoryObject(env: Pick<Env, "REPOSITORIES">, id: string) {
+  return env.REPOSITORIES.get(env.REPOSITORIES.idFromString(id));
 }
 
 /** The v0 ref advertisement. The Worker also sends it with no refs, for a push to a Repository that doesn't exist yet. */

@@ -18,7 +18,9 @@
   "secrets": { "required": ["RESEND_API_KEY", "EMAIL_FROM", "REGISTRATION_ALLOWLIST", "SESSION_SECRET"] },
   "durable_objects": {
     "bindings": [
-      { "name": "REPOSITORY", "class_name": "RepositoryObject" },
+      // Not REPOSITORY: stage 1 bound that name to the deleted Repository class, and Cloudflare refuses to delete a
+      // class while a binding of the same name is still around, even one that now points at another class.
+      { "name": "REPOSITORIES", "class_name": "RepositoryObject" },
       { "name": "USERS", "class_name": "Users" }
     ]
   },

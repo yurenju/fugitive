@@ -156,7 +156,7 @@ export class Users extends DurableObject<Env> {
     return this.ctx.storage.transactionSync(() => {
       const found = this.findRepository(ownerId, name);
       if (found) return found;
-      const id = this.env.REPOSITORY.newUniqueId().toString();
+      const id = this.env.REPOSITORIES.newUniqueId().toString();
       this.sql.exec(
         "INSERT INTO repositories (owner_id, name, id, created_at) VALUES (?, ?, ?, ?)",
         ownerId,
