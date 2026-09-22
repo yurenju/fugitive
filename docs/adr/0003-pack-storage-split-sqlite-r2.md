@@ -17,3 +17,7 @@ git push 時，client 會把伺服器還沒有的物件打成一個 pack 送上�
 - R2 不在 SQLite 的 transaction 裡，所以大 push 的順序必須是：pack 寫進 R2 → 寫目錄 → 在 transaction 裡確認 ref 還指在預期的物件上才移動它。push 處理失敗時會把它留下的東西清掉；但如果是 Worker 在中途當掉，R2 裡的 pack 會留著沒人用，目前不清理。當掉時寫到一半的目錄紀錄不會被當成存在的物件（pack 要建完目錄、通過連通性檢查才算完整），下一次 push 開始時清掉。
 - 目前也不做 GC：刪分支或 force push 之後，沒人用的物件和 pack 還是佔著空間。
 - R2 bucket `fugitive-packs` 要事先在 Cloudflare 後台手動建好，部署不會替我們建。
+
+## 2026-09 補充：由 ADR 0009 接手清理與 GC
+
+上面〈後果〉裡「R2 裡的 pack 會留著沒人用，目前不清理」與「目前也不做 GC」這兩條不再成立，原文保留不動。push 途中當掉留在 R2 的 pack，由下一個 push 開始時刪掉，漏掉的由 GC 掃 R2 時刪掉；走不到的物件由背景的 GC 清掉。做法見 [ADR 0009](0009-gc-without-grace-period.md)。

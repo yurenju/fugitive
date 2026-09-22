@@ -51,6 +51,18 @@ export function packEntryHeader(typeCode: number, size: number): Uint8Array {
   return new Uint8Array(bytes);
 }
 
+/** How far back an ofs-delta's base starts, in the pack's encoding (the inverse of the parse in receive.ts). */
+export function ofsDistance(distance: number): Uint8Array {
+  const bytes = [distance & 0x7f];
+  distance = Math.floor(distance / 128);
+  while (distance > 0) {
+    distance--;
+    bytes.unshift(0x80 | (distance & 0x7f));
+    distance = Math.floor(distance / 128);
+  }
+  return new Uint8Array(bytes);
+}
+
 export class DeltaError extends Error {}
 
 /** Apply a delta to its base to get the full object. */

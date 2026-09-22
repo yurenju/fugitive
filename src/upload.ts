@@ -190,6 +190,22 @@ async function select(store: Store, req: FetchRequest): Promise<Selection> {
   };
 }
 
+/** Every object reachable from a ref: what a clone of all refs would get. GC walks the same way. */
+export async function reachableObjects(store: Store): Promise<string[]> {
+  const wants = [...new Set(store.refs().values())];
+  if (!wants.length) return [];
+  const req: FetchRequest = {
+    wants,
+    haves: [],
+    clientShallow: new Set(),
+    deepenRelative: false,
+    includeTag: false,
+    noProgress: true,
+    done: true,
+  };
+  return (await select(store, req)).objects;
+}
+
 /**
  * Build the pack. Non-delta objects copy their compressed data straight from storage; deltas whose
  * base is also being sent are copied as ref-deltas; everything else is resolved and recompressed.
