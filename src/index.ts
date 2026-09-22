@@ -12,7 +12,7 @@ import { checkAccess } from "./access";
 import { authorize, authorizeDone, type Props } from "./authorize";
 import { advertiseRefs, gitResponse, repositoryObject } from "./repository";
 import { idleTooLong, repositoryNameProblem, userNameProblem } from "./rules";
-import { helperScript, installScript } from "./scripts";
+import { helperScript, installPowerShellScript, installScript } from "./scripts";
 import { settings } from "./settings";
 import { now, users } from "./sign-in";
 
@@ -108,6 +108,7 @@ const defaultHandler: ExportedHandler<Env> = {
     if (url.pathname === "/authorize/done") return authorizeDone(request);
     if (url.pathname === "/settings" || url.pathname.startsWith("/settings/")) return settings(request, env);
     if (url.pathname === "/install.sh") return text(installScript(url.origin), 200);
+    if (url.pathname === "/install.ps1") return text(installPowerShellScript(url.origin), 200);
     if (url.pathname === "/git-credential-fugitive") return text(helperScript(url.origin), 200);
     return text("not found\n", 404);
   },

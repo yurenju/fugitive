@@ -124,7 +124,8 @@ login() { # prints the new access token
   state=$(openssl rand -hex 16)
   url="$ORIGIN/authorize?response_type=code&client_id=$client&redirect_uri=$(urlencode "$redirect")&code_challenge=$challenge&code_challenge_method=S256&state=$state"
 
-  for opener in xdg-open open start; do
+  # explorer is the one that works on Windows: `start` is a cmd builtin, so Git for Windows' sh never finds it.
+  for opener in xdg-open open start explorer; do
     if command -v "$opener" >/dev/null 2>&1; then
       "$opener" "$url" >/dev/null 2>&1 &
       break

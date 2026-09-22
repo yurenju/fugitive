@@ -9,7 +9,7 @@ import { applyDelta, bytesToHex, CODE_TYPE, hashObject, ZERO_OID, type ObjectTyp
 import { concat, DELIM, FLUSH, parsePackets, pkt } from "../src/pktline";
 import type { RepositoryObject } from "../src/repository";
 import type { Store } from "../src/store";
-import { basic, call, emails, signUp, type SignedUp } from "./helpers";
+import { basic, call, emails, ORIGIN, signUp, type SignedUp } from "./helpers";
 
 const fx = inject("fixtures");
 const [c0, c1, c2] = fx.commits;
@@ -83,6 +83,17 @@ async function lsRefs(repository: string): Promise<Record<string, string>> {
 
 let n = 0;
 const fresh = () => `repository${++n}`;
+
+describe("installers", () => {
+  // e2e runs install.sh for real; install.ps1 needs Windows, so this is all the coverage it gets.
+  it("serve install.ps1 with this host's origin filled in", async () => {
+    const res = await call("/install.ps1");
+    expect(res.status).toBe(200);
+    const script = await res.text();
+    expect(script).toContain(`$origin = '${ORIGIN}'`);
+    expect(script).not.toContain("__ORIGIN__");
+  });
+});
 
 describe("push", () => {
   it("stores a pack and moves the ref; HEAD follows the first branch", async () => {

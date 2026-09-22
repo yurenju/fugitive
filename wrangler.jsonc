@@ -7,8 +7,8 @@
   // CPU is the first limit a push hits (see the research in #3), so raise it to the platform maximum.
   "limits": { "cpu_ms": 300000 },
   "observability": { "enabled": true },
-  // The credential helper and installer are shell scripts in src/scripts, served as text.
-  "rules": [{ "type": "Text", "globs": ["**/*.sh"], "fallthrough": true }],
+  // The credential helper and the installers live in src/scripts and are served as text.
+  "rules": [{ "type": "Text", "globs": ["**/*.sh", "**/*.ps1"], "fallthrough": true }],
   "vars": {
     // Tests point this at a fake Resend.
     "RESEND_API_URL": "https://api.resend.com"
