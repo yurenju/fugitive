@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0004
+---
+
 # git 連線用 User key 的簽章當憑證，不發 access token
 
 `git` 透過 HTTPS 連線時，一個指令只會向 credential helper 要一次憑證，之後每個請求都帶同一組。常見的做法是發一組 personal access token，但那是一個長期有效的秘密，伺服器得保存它。我們的做法是：伺服器在 401 回應裡出一段 challenge（repo、讀或寫、伺服器時間、亂數，加上伺服器用自己的秘密算的檢查碼），我們的 credential helper 用 User 的私鑰（Ed25519，透過 `ssh-keygen -Y sign`）簽這段 challenge，把「challenge + 簽章」當成 Basic 驗證的密碼交給 git；伺服器每收到一個請求，就驗檢查碼、時效，再用簽章裡的公鑰對照登記過的 User key。伺服器不發 token，也不存任何可以拿來冒用使用者身分的東西。
