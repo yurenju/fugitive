@@ -58,23 +58,25 @@ fresh_token() { # the stored access token, if it has at least 60 seconds left
   [ -n "$at" ] && [ "${exp:-0}" -gt "$(($(now) + 60))" ] && printf '%s' "$at"
 }
 
+# The lock is a file created with noclobber: the shell opens it with O_EXCL, so of two helpers exactly one gets it.
+# Not `mkdir`, the usual shell lock: uutils coreutils' mkdir (Ubuntu's default since 25.10) can let two succeed.
 take_lock() {
   waited=0
-  until mkdir "$lock" 2>/dev/null; do
-    # A lock older than a minute belongs to a helper that died.
+  until (set -C && : >"$lock") 2>/dev/null; do
+    # A lock older than a minute belongs to a helper that died (older helpers used a directory).
     if [ -n "$(find "$lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-      rmdir "$lock" 2>/dev/null
+      rm -rf "$lock"
       continue
     fi
     waited=$((waited + 1))
     [ "$waited" -ge 30 ] && die "gave up waiting for $lock"
     sleep 1
   done
-  trap 'rmdir "$lock" 2>/dev/null' EXIT
+  trap 'rm -f "$lock"' EXIT
 }
 
 drop_lock() {
-  rmdir "$lock" 2>/dev/null
+  rm -f "$lock"
   trap - EXIT
 }
 
