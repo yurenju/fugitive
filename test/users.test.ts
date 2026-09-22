@@ -510,7 +510,7 @@ describe("the Settings Page", () => {
     expect((await push(u, "doomed", u.access_token)).status).toBe(200);
     expect(await users().findRepository(userId, "doomed")).not.toBe(id);
 
-    const old = env.REPOSITORY.get(env.REPOSITORY.idFromString(id));
+    const old = env.REPOSITORIES.get(env.REPOSITORIES.idFromString(id));
     // The alarm is due at once, so it may have run already; if not, run it now.
     await runDurableObjectAlarm(old);
     expect((await env.PACKS.list({ prefix: `${id}/` })).objects).toEqual([]);
