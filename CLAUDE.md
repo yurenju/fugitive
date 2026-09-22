@@ -17,3 +17,7 @@ issue 放在 GitHub 的 `yurenju/fugitive`，一律用 `gh` 操作。細節見 `
 ### 領域文件
 
 整個 repo 只有一個領域：名詞定義在根目錄的 `CONTEXT.md`，決策紀錄放在 `docs/adr/`。細節見 `docs/agents/domain.md`。
+
+### Pull requests
+
+動到畫面（授權頁、設定頁的 HTML 或 CSS）的 PR 要附手機與桌機的截圖，由開 PR 的 agent 自己看過。怎麼截、怎麼放見 `docs/agents/pull-requests.md`。

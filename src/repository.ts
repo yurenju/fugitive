@@ -1,4 +1,6 @@
-// One Durable Object per Repository. The Worker has already authenticated every request that gets here.
+// One Durable Object per Repository, found by its Repository ID (ADR 0008). The Worker has already authenticated
+// every request that gets here. The class is not called `Repository`: stage 1's class of that name was deleted
+// together with its data (spec #24).
 import { DurableObject } from "cloudflare:workers";
 import { ZERO_OID } from "./objects";
 import { concat, FLUSH, parsePackets, pkt, ProtocolError } from "./pktline";
@@ -9,7 +11,10 @@ import { AGENT, UPLOAD_CAPABILITIES_V0, uploadPackV0, uploadPackV2, V2_CAPABILIT
 /** upload-pack requests are just short want/have lines; they should never be large. */
 const MAX_UPLOAD_REQUEST = 10 * 1024 * 1024;
 
-export class Repository extends DurableObject<Env> {
+/** R2's list and delete both take at most 1000 keys at a time. */
+const DELETE_BATCH = 1000;
+
+export class RepositoryObject extends DurableObject<Env> {
   private store: Store;
   /** Pushes to one Repository run one at a time, so two pushes never write the index at once. */
   private pushes: Promise<unknown> = Promise.resolve();
@@ -46,6 +51,23 @@ export class Repository extends DurableObject<Env> {
     }
   }
 
+  isEmpty(): boolean {
+    return this.store.refs().size === 0;
+  }
+
+  /** Deleting a Repository: returns at once; the alarm clears R2 in batches, then this object's own storage. */
+  async destroy(): Promise<void> {
+    await this.ctx.storage.setAlarm(Date.now());
+  }
+
+  async alarm(): Promise<void> {
+    const listed = await this.env.PACKS.list({ prefix: `${this.ctx.id.toString()}/`, limit: DELETE_BATCH });
+    if (listed.objects.length) await this.env.PACKS.delete(listed.objects.map((o) => o.key));
+    // The platform retries a failed alarm, so a crash part way through picks up where it stopped.
+    if (listed.truncated) await this.ctx.storage.setAlarm(Date.now());
+    else await this.ctx.storage.deleteAll();
+  }
+
   /** During a large push, yield after each batch and flush writes so unwritten data doesn't pile up in memory. */
   private async breathe() {
     await this.ctx.storage.sync();
@@ -56,23 +78,31 @@ export class Repository extends DurableObject<Env> {
     if (service === "git-upload-pack" && v2) {
       return concat([...V2_CAPABILITIES.map((c) => pkt(`${c}\n`)), FLUSH]);
     }
-    const refs = this.store.refs();
-    const head = this.store.head();
-    let caps = `${service === "git-upload-pack" ? UPLOAD_CAPABILITIES_V0 : RECEIVE_CAPABILITIES} ${AGENT}`;
-    const lines: [string, string][] = [];
-    if (service === "git-upload-pack" && head && refs.has(head)) {
-      caps += ` symref=HEAD:${head}`;
-      lines.push([refs.get(head)!, "HEAD"]);
-    }
-    for (const [name, oid] of refs) lines.push([oid, name]);
-    if (!lines.length) lines.push([ZERO_OID, "capabilities^{}"]);
-    return concat([
-      pkt(`# service=${service}\n`),
-      FLUSH,
-      ...lines.map(([oid, name], i) => pkt(i === 0 ? `${oid} ${name}\0${caps}\n` : `${oid} ${name}\n`)),
-      FLUSH,
-    ]);
+    return advertiseRefs(service, this.store.refs(), this.store.head());
   }
+}
+
+/** The Durable Object of the Repository with this Repository ID. */
+export function repositoryObject(env: Pick<Env, "REPOSITORY">, id: string) {
+  return env.REPOSITORY.get(env.REPOSITORY.idFromString(id));
+}
+
+/** The v0 ref advertisement. The Worker also sends it with no refs, for a push to a Repository that doesn't exist yet. */
+export function advertiseRefs(service: string, refs: Map<string, string>, head?: string): Uint8Array {
+  let caps = `${service === "git-upload-pack" ? UPLOAD_CAPABILITIES_V0 : RECEIVE_CAPABILITIES} ${AGENT}`;
+  const lines: [string, string][] = [];
+  if (service === "git-upload-pack" && head && refs.has(head)) {
+    caps += ` symref=HEAD:${head}`;
+    lines.push([refs.get(head)!, "HEAD"]);
+  }
+  for (const [name, oid] of refs) lines.push([oid, name]);
+  if (!lines.length) lines.push([ZERO_OID, "capabilities^{}"]);
+  return concat([
+    pkt(`# service=${service}\n`),
+    FLUSH,
+    ...lines.map(([oid, name], i) => pkt(i === 0 ? `${oid} ${name}\0${caps}\n` : `${oid} ${name}\n`)),
+    FLUSH,
+  ]);
 }
 
 function contentLength(request: Request): number | undefined {
@@ -119,7 +149,7 @@ async function startStream(gen: AsyncGenerator<Uint8Array>): Promise<ReadableStr
   });
 }
 
-function gitResponse(kind: string, body: BodyInit, status = 200): Response {
+export function gitResponse(kind: string, body: BodyInit, status = 200): Response {
   return new Response(body, {
     status,
     headers: { "Content-Type": `application/x-${kind}`, "Cache-Control": "no-cache" },

@@ -1,64 +1,23 @@
 // Send HTTP requests straight to the Worker to test cases real git can't easily produce.
-// The packs come from real git, generated in global-setup.
-import { env, exports } from "cloudflare:workers";
+// The packs come from real git, generated in global-setup; credentials are access tokens from the real OAuth flow.
+import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { describe, expect, inject, it } from "vitest";
-import { base64url, issueChallenge, NAMESPACE, publicKeyBlob, type Mode } from "../src/auth";
+import { beforeAll, describe, expect, inject, it } from "vitest";
 import { ZERO_OID } from "../src/objects";
 import { concat, DELIM, FLUSH, parsePackets, pkt } from "../src/pktline";
+import { basic, call, emails, signUp, type SignedUp } from "./helpers";
 
 const fx = inject("fixtures");
-const ORIGIN = "https://fugitive.test";
-const SECRET = "test-secret";
 const [c0, c1, c2] = fx.commits;
-const encoder = new TextEncoder();
 
 const b64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const basePack = b64(fx.basePack);
 const thinPack = b64(fx.thinPack);
 
-function sshString(data: Uint8Array | string): Uint8Array {
-  const bytes = typeof data === "string" ? encoder.encode(data) : data;
-  const out = new Uint8Array(4 + bytes.length);
-  new DataView(out.buffer).setUint32(0, bytes.length);
-  out.set(bytes, 4);
-  return out;
-}
-
-/** Produce an SSHSIG signature in the same format as `ssh-keygen -Y sign`. */
-async function sshsig(message: string, pkcs8: string, publicLine: string, namespace = NAMESPACE): Promise<Uint8Array> {
-  const key = await crypto.subtle.importKey("pkcs8", b64(pkcs8), { name: "Ed25519" }, false, ["sign"]);
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-512", encoder.encode(message)));
-  const signed = concat([encoder.encode("SSHSIG"), sshString(namespace), sshString(""), sshString("sha512"), sshString(digest)]);
-  const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, key, signed));
-  const version = new Uint8Array([0, 0, 0, 1]);
-  return concat([
-    encoder.encode("SSHSIG"),
-    version,
-    sshString(publicKeyBlob(publicLine)),
-    sshString(namespace),
-    sshString(""),
-    sshString("sha512"),
-    sshString(concat([sshString("ssh-ed25519"), sshString(sig)])),
-  ]);
-}
-
-interface CredOptions {
-  challenge?: string;
-  stranger?: boolean;
-  namespace?: string;
-}
-
-async function credentials(repository: string, mode: Mode, opts: CredOptions = {}): Promise<string> {
-  const challenge = opts.challenge ?? (await issueChallenge(SECRET, repository, mode, Math.floor(Date.now() / 1000)));
-  const [priv, pub] = opts.stranger ? [fx.strangerPrivateKey, fx.strangerKey] : [fx.userPrivateKey, fx.userKey];
-  const sig = await sshsig(challenge, priv, pub, opts.namespace);
-  return `Basic ${btoa(`x:fgt1.${challenge}.${base64url(sig)}`)}`;
-}
-
-function call(path: string, init: RequestInit = {}): Promise<Response> {
-  return exports.default.fetch(new Request(`${ORIGIN}${path}`, init));
-}
+let owner: SignedUp;
+beforeAll(async () => {
+  owner = await signUp(emails(50)(), { name: "tester" });
+});
 
 /** Unwrap a side-band response into the pkt-lines on band 1. */
 function unband(body: Uint8Array): string[] {
@@ -86,7 +45,7 @@ async function push(repository: string, commands: string[], pack: Uint8Array | n
   ]);
   const init: RequestInit = {
     method: "POST",
-    headers: { Authorization: opts.auth ?? (await credentials(`tester/${repository}`, "write")) },
+    headers: { Authorization: opts.auth ?? basic(owner.access_token) },
     body: opts.stream
       ? new ReadableStream({
           start(c) {
@@ -96,15 +55,15 @@ async function push(repository: string, commands: string[], pack: Uint8Array | n
         })
       : body,
   };
-  const res = await call(`/tester/${repository}.git/git-receive-pack`, init);
+  const res = await call(`/@tester/${repository}.git/git-receive-pack`, init);
   expect(res.status).toBe(200);
   return unband(new Uint8Array(await res.arrayBuffer()));
 }
 
 async function lsRefs(repository: string): Promise<Record<string, string>> {
-  const res = await call(`/tester/${repository}.git/git-upload-pack`, {
+  const res = await call(`/@tester/${repository}.git/git-upload-pack`, {
     method: "POST",
-    headers: { Authorization: await credentials(`tester/${repository}`, "read"), "Git-Protocol": "version=2" },
+    headers: { Authorization: basic(owner.access_token), "Git-Protocol": "version=2" },
     body: concat([pkt("command=ls-refs\n"), DELIM, pkt("symrefs\n"), FLUSH]),
   });
   expect(res.status).toBe(200);
@@ -119,64 +78,6 @@ async function lsRefs(repository: string): Promise<Record<string, string>> {
 
 let n = 0;
 const fresh = () => `repository${++n}`;
-
-describe("routing and authentication", () => {
-  it("serves the installer and the helper", async () => {
-    const install = await call("/install.sh");
-    expect(install.status).toBe(200);
-    expect(await install.text()).toContain(`origin='${ORIGIN}'`);
-    expect(await (await call("/git-credential-fugitive")).text()).toContain("ssh-keygen -q -Y sign -n fugitive-git-v1");
-  });
-
-  it("asks for credentials with a challenge in WWW-Authenticate", async () => {
-    const res = await call("/tester/a.git/info/refs?service=git-upload-pack");
-    expect(res.status).toBe(401);
-    const header = res.headers.get("WWW-Authenticate")!;
-    const challenge = /^Basic realm="fugitive", challenge="([A-Za-z0-9_-]+)"$/.exec(header)?.[1];
-    expect(challenge).toBeTruthy();
-    // this is exactly what the helper signs
-    const ok = await call("/tester/a.git/info/refs?service=git-upload-pack", {
-      headers: { Authorization: await credentials("tester/a", "read", { challenge }) },
-    });
-    expect(ok.status).toBe(200);
-    expect(ok.headers.get("Content-Type")).toBe("application/x-git-upload-pack-advertisement");
-  });
-
-  const rejected: [string, () => Promise<string>][] = [
-    ["an unknown key", () => credentials("tester/a", "read", { stranger: true })],
-    ["a challenge for another repository", () => credentials("tester/b", "read")],
-    ["a read challenge used to write", async () => credentials("tester/a", "read")],
-    [
-      "an expired challenge",
-      async () =>
-        credentials("tester/a", "read", {
-          challenge: await issueChallenge(SECRET, "tester/a", "read", Math.floor(Date.now() / 1000) - 601),
-        }),
-    ],
-    [
-      "a challenge not issued by this server",
-      async () =>
-        credentials("tester/a", "read", {
-          challenge: await issueChallenge("other-secret", "tester/a", "read", Math.floor(Date.now() / 1000)),
-        }),
-    ],
-    ["a signature in the wrong namespace", () => credentials("tester/a", "read", { namespace: "git" })],
-  ];
-  for (const [what, auth] of rejected) {
-    it(`rejects ${what}`, async () => {
-      const service = what.includes("to write") ? "git-receive-pack" : "git-upload-pack";
-      const res = await call(`/tester/a.git/info/refs?service=${service}`, { headers: { Authorization: await auth() } });
-      expect(res.status).toBe(401);
-      expect(res.headers.get("WWW-Authenticate")).toMatch(/challenge=/);
-    });
-  }
-
-  it("returns 404 for another owner and 403 for dumb HTTP", async () => {
-    expect((await call("/someone/a.git/info/refs?service=git-upload-pack")).status).toBe(404);
-    expect((await call("/tester/a.git/info/refs")).status).toBe(403);
-    expect((await call("/tester/a.git/HEAD")).status).toBe(404);
-  });
-});
 
 describe("push", () => {
   it("stores a pack and moves the ref; HEAD follows the first branch", async () => {
@@ -274,14 +175,6 @@ describe("push", () => {
 });
 
 describe("review fixes", () => {
-  it("answers a garbled password with 401 and a new challenge, not 500", async () => {
-    const res = await call("/tester/a.git/info/refs?service=git-upload-pack", {
-      headers: { Authorization: `Basic ${btoa("x:fgt1.a.b")}` },
-    });
-    expect(res.status).toBe(401);
-    expect(res.headers.get("WWW-Authenticate")).toMatch(/challenge=/);
-  });
-
   it("reports a pack with a valid checksum but corrupt zlib data as an unpack error", async () => {
     const repository = fresh();
     const corrupt = basePack.slice();
@@ -299,7 +192,9 @@ describe("review fixes", () => {
     const repository = fresh();
     await push(repository, [`${ZERO_OID} ${c1} refs/heads/main`], basePack);
     // Simulate a push that died while indexing: the pack was never marked complete.
-    const stub = env.REPOSITORY.getByName(`tester/${repository}`);
+    // Access tokens are `<user id>:<grant id>:<secret>`.
+    const id = (await env.USERS.getByName("global").findRepository(owner.access_token.split(":")[0], repository))!;
+    const stub = env.REPOSITORY.get(env.REPOSITORY.idFromString(id));
     await runInDurableObject(stub, (_instance, state) => {
       state.storage.sql.exec("UPDATE packs SET complete = 0");
     });
