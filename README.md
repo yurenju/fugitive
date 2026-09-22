@@ -11,11 +11,17 @@ curl -fsSL https://<host>/install.sh | sh
 git clone https://<host>/@<owner>/<repository>.git
 ```
 
+On Windows, install from PowerShell instead (`git clone` is the same); it needs Git for Windows, whose bundled `sh`, `curl` and `openssl` are what the helper runs on:
+
+```powershell
+irm https://<host>/install.ps1 | iex
+```
+
 The installer puts a credential helper in place and writes git config for this host only (run it again to replace an older helper). The helper needs only `sh`, `curl` and `openssl`, and works with any git version. The first clone or push opens the sign-in page in your browser (or prints its URL): enter your email, the 6-digit code you are mailed, and approve; the last page shows a code to paste back into the terminal, and the git command carries on. After that the helper refreshes its token on its own; a machine unused for 90 days signs in again. Each machine is its own entry on the settings page.
 
 - Pushing to a name that doesn't exist yet creates the repository. Names are lowercase letters, digits, `.`, `_` and `-`.
 - `https://<host>/settings` lists the tools you approved and your repositories. Revoking a tool and deleting a repository happen only there; no token can do either.
-- `~/.local/share/fugitive/git-credential-fugitive logout` revokes this machine's token; `login` signs in again.
+- `~/.local/share/fugitive/git-credential-fugitive logout` revokes this machine's token; `login` signs in again. On Windows the helper is at `%LOCALAPPDATA%\fugitive\`, and being an `sh` script it wants Git Bash rather than PowerShell.
 - Without a terminal (an IDE's background git, CI), the helper can't sign in; run its `login` in a terminal once, and the refresh token carries on from there.
 
 ### Importing more than 100 MB
