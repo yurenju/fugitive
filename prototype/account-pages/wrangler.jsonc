@@ -1,0 +1,7 @@
+// PROTOTYPE — throwaway. Three variants of the Authorization Page and Settings Page (spec #24).
+// Run with `npm run prototype:pages`. Never deployed; state lives in memory.
+{
+  "name": "fugitive-prototype-account-pages",
+  "main": "worker.ts",
+  "compatibility_date": "2026-08-22"
+}
