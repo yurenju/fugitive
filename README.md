@@ -35,6 +35,6 @@ Deployment runs on Cloudflare Workers Builds: the `fugitive` Worker is connected
 
 One-time setup in the Cloudflare dashboard:
 
-1. Create a Worker named `fugitive` (it must match `name` in `wrangler.jsonc`), then under **Settings → Builds** connect this repository with branch `main`, build command `npm run build` (a typecheck; a type error stops the deploy) and deploy command `npx wrangler deploy`. The deploy creates the KV namespace `OAUTH_KV` and the R2 bucket `fugitive-repositories` if they are missing; if it can't, create them by hand and fill them into `wrangler.jsonc`.
+1. Create a Worker named `fugitive` (it must match `name` in `wrangler.jsonc`), then under **Settings → Builds** connect this repository with branch `main`, build command `npm run build` (a typecheck; a type error stops the deploy) and deploy command `npx wrangler deploy`. The deploy creates the KV namespace `fugitive-oauth-store` (bound as `OAUTH_STORE`) and the R2 bucket `fugitive-repositories` if they are missing; if it can't, create them by hand and fill them into `wrangler.jsonc`.
 2. Verify a sending domain in [Resend](https://resend.com) and add its DNS records.
 3. Under the Worker's **Settings → Variables and Secrets**, add the secrets `RESEND_API_KEY`, `EMAIL_FROM` (e.g. `fugitive <noreply@your-domain>`), `REGISTRATION_ALLOWLIST` (emails separated by commas or newlines) and `SESSION_SECRET` (any random string, e.g. `openssl rand -base64 32`; it signs the settings page cookie and the approval step).

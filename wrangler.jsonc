@@ -29,6 +29,8 @@
   ],
   // Created on deploy if missing. Stage 1's bucket, fugitive-packs, is emptied by a lifecycle rule and then deleted.
   "r2_buckets": [{ "binding": "PACKS", "bucket_name": "fugitive-repositories" }],
-  // The OAuth package keeps clients, grants and tokens here (ADR 0005). Created on deploy.
-  "kv_namespaces": [{ "binding": "OAUTH_KV" }]
+  // The OAuth package keeps clients, grants and tokens here (ADR 0005); created on deploy as fugitive-oauth-store.
+  // The package reads it as env.OAUTH_KV, but another service on the account already uses that name, so
+  // src/index.ts hands it over under the package's name.
+  "kv_namespaces": [{ "binding": "OAUTH_STORE" }]
 }

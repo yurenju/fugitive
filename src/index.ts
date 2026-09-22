@@ -23,7 +23,14 @@ declare global {
   interface Env {
     /** Set by the OAuth package before it calls the default handler. */
     OAUTH_PROVIDER: OAuthHelpers;
+    /** The package's name for its KV; see oauthEnv(). */
+    OAUTH_KV: KVNamespace;
   }
+}
+
+/** The package reads its KV as env.OAUTH_KV; ours is bound as OAUTH_STORE (see wrangler.jsonc). */
+function oauthEnv(env: Omit<Env, "OAUTH_KV" | "OAUTH_PROVIDER">): Env {
+  return Object.assign(env, { OAUTH_KV: env.OAUTH_STORE }) as Env;
 }
 
 const GIT_PATH = /^\/@([^/]+)\/([^/]+)\.git\/(info\/refs|git-upload-pack|git-receive-pack)$/;
@@ -126,7 +133,7 @@ const options: OAuthProviderOptions<Env> = {
     const at = now();
     const p = props as Props;
     if (idleTooLong(p.lastUsedAt, at)) {
-      await getOAuthApi<Env>(options, workerEnv as Env).revokeGrant(grantId, userId);
+      await getOAuthApi<Env>(options, oauthEnv(workerEnv)).revokeGrant(grantId, userId);
       throw new OAuthError("invalid_grant", { description: "unused for more than 90 days; sign in again" });
     }
     await users(workerEnv).touchGrant(grantId, at);
@@ -134,4 +141,8 @@ const options: OAuthProviderOptions<Env> = {
   },
 };
 
-export default new OAuthProvider<Env>(options);
+const provider = new OAuthProvider<Env>(options);
+
+export default {
+  fetch: (request, env, ctx) => provider.fetch(request, oauthEnv(env), ctx),
+} satisfies ExportedHandler<Env>;
