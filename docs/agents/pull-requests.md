@@ -37,7 +37,7 @@ $P resize 1000 700 && $P screenshot --filename="$S/settings-desktop.png"
 
 幾件會踩到的事：
 
-- **同一個 email 一分鐘只寄一次驗證碼。** 授權頁走完馬上去設定頁登入，第二封信不會寄出，頁面也不會說（刻意的，見 #25）。中間 `sleep 61`，或截圖只用一個 email 走一趟。
+- **同一個 email 一分鐘只寄一次驗證碼。** 授權頁走完馬上去設定頁登入，第二封信不會寄出，頁面也不會說（刻意的，見 #25）。起 `wrangler dev` 時加上 `--var CODE_RESEND_SECONDS:0` 就不必等（e2e 也是這樣做，見 #35）；這個開關只給測試用，不要寫進 `wrangler.jsonc`。
 - **收掉伺服器時用 PID，不要 `pkill -f "port 8793"`**：那個字串也出現在你正在跑的那行指令裡，會連自己的 shell 一起砍掉。
 - `wrangler dev` 會自己重新載入改過的程式，設定頁的 cookie 30 分鐘內也還有效，所以改完版面只要 `goto` 同一頁重截，不必從頭走。
 
