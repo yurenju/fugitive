@@ -107,17 +107,20 @@ const cannot = ["Delete repositories", "Revoke other tools"];
 // ===== Variant A: one question per page, narrow centred card; consent is its own last step =====
 
 const A = {
-  css: `body{font:16px/1.5 system-ui,sans-serif;background:#f4f4f5;color:#18181b;margin:0;padding:48px 16px}
-  .card{max-width:380px;margin:0 auto;background:#fff;border:1px solid #e4e4e7;border-radius:12px;padding:28px}
-  .brand{text-align:center;font-weight:700;letter-spacing:.02em;margin-bottom:20px;color:#52525b}
-  h1{font-size:20px;margin:0 0 8px} label{display:block;font-size:14px;margin:16px 0 4px;color:#3f3f46}
-  input[type=email],input[type=text]{width:100%;box-sizing:border-box;padding:10px;border:1px solid #d4d4d8;border-radius:8px;font:inherit}
-  button{width:100%;margin-top:20px;padding:11px;border:0;border-radius:8px;background:#18181b;color:#fff;font:inherit;cursor:pointer}
-  button.link{background:none;color:#52525b;margin-top:8px;padding:4px;text-decoration:underline}
-  .err{color:#b91c1c}.note{color:#15803d}.muted{color:#71717a;font-size:14px}
-  .code{font:28px/1.2 ui-monospace,monospace;letter-spacing:.15em;text-align:center;padding:16px;background:#f4f4f5;border-radius:8px}
-  table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:8px 4px;border-bottom:1px solid #e4e4e7}
-  .wide{max-width:720px} .row-del input{width:130px;padding:6px} .row-del button{width:auto;margin:0 0 0 6px;padding:6px 10px;background:#b91c1c}
+  // Dark only (spec #24): colours live in variables so a light set can be added later.
+  css: `:root{color-scheme:dark;--bg:#0b0b0e;--card:#16161b;--border:#2a2a33;--text:#ececf1;--muted:#9a9aa6;
+   --primary:#ececf1;--on-primary:#0b0b0e;--danger:#dc2626;--err:#f87171;--ok:#4ade80;--field:#0f0f13}
+  body{font:16px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:48px 16px}
+  .card{max-width:380px;margin:0 auto;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:28px}
+  .brand{text-align:center;font-weight:700;letter-spacing:.02em;margin-bottom:20px;color:var(--muted)}
+  h1{font-size:20px;margin:0 0 8px} label{display:block;font-size:14px;margin:16px 0 4px;color:var(--muted)}
+  input[type=email],input[type=text]{width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--border);border-radius:8px;font:inherit;background:var(--field);color:var(--text)}
+  button{width:100%;margin-top:20px;padding:11px;border:0;border-radius:8px;background:var(--primary);color:var(--on-primary);font:inherit;cursor:pointer}
+  button.link{background:none;color:var(--muted);margin-top:8px;padding:4px;text-decoration:underline}
+  .err{color:var(--err)}.note{color:var(--ok)}.muted{color:var(--muted);font-size:14px}
+  .code{font:28px/1.2 ui-monospace,monospace;letter-spacing:.15em;text-align:center;padding:16px;background:var(--field);border:1px solid var(--border);border-radius:8px}
+  table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:8px 4px;border-bottom:1px solid var(--border)}
+  .wide{max-width:720px} .row-del input{width:130px;padding:6px} .row-del button{width:auto;margin:0 0 0 6px;padding:6px 10px;background:var(--danger);color:#fff}
   td form{display:inline} td button{width:auto;margin:0;padding:6px 10px}`,
   page(step: Step): [string, string] {
     const wrap = (title: string, body: string, wide = false) =>
