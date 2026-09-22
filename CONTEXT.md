@@ -1,6 +1,6 @@
 # Fugitive
 
-架在 Cloudflare 上、給多人使用的 git 主機。一般的 `git` 指令就能透過 HTTPS clone 和 push；之後 agent 也能透過 MCP 瀏覽檔案、執行 git 操作。
+架在 Cloudflare 上、給多人使用的 git 主機。一般的 `git` 指令就能透過 HTTPS clone 和 push；之後 agent 也能透過 MCP 或檔案 API 瀏覽檔案、直接 commit。
 
 ## 名詞定義
 
@@ -18,11 +18,17 @@ _避免使用_：帳號 (Account)、會員 (Member)、客戶 (Customer)
 
 _避免使用_：Whitelist、邀請名單 (Invite List)、測試名單 (Beta List)
 
-### 使用者金鑰 (User Key)
+### 驗證碼 (Verification Code)
 
-使用者登記在這裡、用來證明自己身分的公鑰，格式是 OpenSSH 的 Ed25519 公鑰。私鑰只在使用者自己手上，主機從頭到尾都看不到。一個使用者可以登記好幾把，但每一把只能屬於一個使用者。
+寄到使用者 email 的一次性數字，在授權頁輸入它，證明這個信箱是自己的。這是證明身分唯一的方式：註冊、登入、授權 agent 都靠它。
 
-_避免使用_：SSH 金鑰 (SSH Key，這裡沒有任何東西走 SSH)、部署金鑰 (Deploy Key)、API 金鑰 (API Key)
+_避免使用_：密碼 (Password)、OTP、登入碼 (Login Code)
+
+### 存取權杖 (Access Token)
+
+使用者在授權頁核准之後，主機發給某個工具的憑證：`git` 的 credential helper、MCP 客戶端、web app 各自拿一組。每組都有期限、可以撤銷，並且帶著權限範圍，只能做被允許的那些事。
+
+_避免使用_：Session、API 金鑰 (API Key)、Personal Access Token
 
 ### 儲存庫 (Repository)
 

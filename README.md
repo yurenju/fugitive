@@ -1,6 +1,6 @@
 # fugitive
 
-A git host on Cloudflare Workers. Clone and push with plain `git` over HTTPS; you authenticate by signing with your own Ed25519 key, and the server never issues tokens (see [ADR 0002](docs/adr/0002-user-key-signatures-as-http-credentials.md)).
+A git host on Cloudflare Workers. Clone and push with plain `git` over HTTPS; you authenticate by signing with your own Ed25519 key, and the server never issues tokens (see [ADR 0002](docs/adr/0002-user-key-signatures-as-http-credentials.md)). Stage 2 replaces this with OAuth access tokens for every client, `git` included (see [ADR 0004](docs/adr/0004-oauth-tokens-for-every-client.md)).
 
 > **Most of the documentation is in Traditional Chinese**: the design decisions in [`docs/adr/`](docs/adr), the domain glossary in [`CONTEXT.md`](CONTEXT.md), agent instructions in [`CLAUDE.md`](CLAUDE.md), and the project's issues and pull requests. Code, comments and this README are in English.
 
