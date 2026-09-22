@@ -78,7 +78,9 @@ drop_lock() {
   trap - EXIT
 }
 
-refresh() { # prints a new access token, or nothing when the refresh token is no good
+# Prints a new access token, or nothing when the refresh token is no good (then sign in again).
+# Fails on anything else, such as the network: signing in would not help.
+refresh() {
   take_lock
   # Another helper may have refreshed while we waited; its refresh token replaced ours.
   at=$(fresh_token) || {
@@ -140,13 +142,22 @@ login() { # prints the new access token
 
 case "$cmd" in
 get)
-  at=$(fresh_token) || { [ -n "$(field refresh_token)" ] && at=$(refresh) && [ -n "$at" ]; } || at=$(login) || exit 1
+  # Each step runs in $(...), so a `die` inside only ends that step; `|| exit 1` passes the failure on.
+  if ! at=$(fresh_token); then
+    if [ -n "$(field refresh_token)" ]; then at=$(refresh) || exit 1; fi
+    [ -n "$at" ] || at=$(login) || exit 1
+  fi
   echo "username=fugitive"
   echo "password=$at"
   ;;
 erase)
-  # The server turned the access token down: drop it, keep the refresh token.
-  [ -f "$file" ] && save "$(field client_id)" "" 0 "$(field refresh_token)"
+  # The server turned the access token down: drop it, keep the refresh token. Under the lock, so a refresh running
+  # at the same time can't have its new refresh token overwritten with the old one.
+  if [ -f "$file" ]; then
+    take_lock
+    save "$(field client_id)" "" 0 "$(field refresh_token)"
+    drop_lock
+  fi
   ;;
 login)
   [ -f "$file" ] && save "$(field client_id)" "" 0 ""

@@ -85,7 +85,6 @@ export interface CodeForm {
   askName: boolean;
   name?: string;
   error?: string;
-  notice?: string;
 }
 
 export function codeForm(f: CodeForm): string {
@@ -97,7 +96,6 @@ export function codeForm(f: CodeForm): string {
     : "";
   return `<h1>${f.askName ? "Create your account" : "Enter your code"}</h1>
 <p>If this email can be used, a code has been sent to <strong>${esc(f.email)}</strong>.</p>
-${f.notice ? `<p class="muted">${esc(f.notice)}</p>` : ""}
 ${error(f.error)}
 <form method="post" action="${esc(f.action)}">
 ${hidden("step", "code")}${hidden("email", f.email)}
@@ -110,5 +108,6 @@ ${nameField}
 <form method="post" action="${esc(f.action)}">
 ${hidden("step", "email")}${hidden("email", f.email)}
 <button type="submit" class="link">Send a new code</button>
+<p class="muted">A new code can be sent once a minute; it replaces the old one.</p>
 </form>`;
 }

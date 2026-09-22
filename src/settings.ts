@@ -1,13 +1,12 @@
 // The Settings Page (ADR 0007): one page, /settings, listing the User's tools and Repositories. Revoking a tool and
 // deleting a Repository happen only here. Changes are POSTs guarded by a SameSite=Strict cookie.
-import { codeError, mailCode, users } from "./authorize";
+import { codeError, formField, mailCode, now, users } from "./sign-in";
+import { repositoryObject } from "./repository";
 import { codeForm, emailForm, error, esc, hidden, page } from "./pages";
 import { sign, verify } from "./signing";
 
 export const SESSION_TTL_SECONDS = 30 * 60;
 const COOKIE = "fugitive_settings";
-
-const now = () => Math.floor(Date.now() / 1000);
 
 function cookie(value: string, maxAge: number): string {
   return `${COOKIE}=${value}; Max-Age=${maxAge}; Path=/settings; HttpOnly; Secure; SameSite=Strict`;
@@ -37,18 +36,19 @@ export async function settings(request: Request, env: Env): Promise<Response> {
     show("Settings", emailForm({ action: "/settings", heading: "Settings", intro: "Sign in with your email to manage your tools and repositories.", error }));
 
   if (url.pathname === "/settings" && request.method === "GET") {
-    return userId ? dashboard(env, userId, url, show) : signIn();
+    return userId ? signedInPage(env, userId, url, show) : signIn();
   }
   if (request.method !== "POST") return new Response("method not allowed\n", { status: 405 });
   const form = await request.formData();
-  const field = (k: string) => (typeof form.get(k) === "string" ? (form.get(k) as string) : "");
+  const field = formField(form);
 
   if (url.pathname === "/settings") {
     const email = field("email");
     if (field("step") === "code") {
       const r = await users(env).redeemCode(email, field("code"), now());
       if (!r.ok) {
-        const message = r.reason === "needs-name" ? "This code has expired or was already used. Ask for a new code." : codeError(r);
+        // Not a User: the Settings Page has no name field, so this is as good as no code.
+        const message = codeError(r.reason === "needs-name" ? { ok: false, reason: "no-code" } : r);
         return show("Settings", codeForm({ action: "/settings", email, askName: false, error: message }));
       }
       const value = await sign(env.SESSION_SECRET, { userId: r.user.id }, now() + SESSION_TTL_SECONDS);
@@ -57,7 +57,7 @@ export async function settings(request: Request, env: Env): Promise<Response> {
     if (!email.includes("@")) return signIn("Enter your email address.");
     const sent = await mailCode(env, email);
     if (sent.error) return signIn(sent.error);
-    return show("Settings", codeForm({ action: "/settings", email, askName: false, notice: sent.notice }));
+    return show("Settings", codeForm({ action: "/settings", email, askName: false }));
   }
   if (url.pathname === "/settings/signout") return seeOther("/settings", { "Set-Cookie": cookie("", 0) });
   if (!userId) return seeOther("/settings");
@@ -74,13 +74,13 @@ export async function settings(request: Request, env: Env): Promise<Response> {
     const name = field("repository");
     if (field("confirm") !== name) return done("mismatch", name);
     const id = await users(env).deleteRepository(userId, name);
-    if (id) await env.REPOSITORY.get(env.REPOSITORY.idFromString(id)).destroy();
+    if (id) await repositoryObject(env, id).destroy();
     return done("deleted", name);
   }
   return new Response("not found\n", { status: 404 });
 }
 
-async function dashboard(
+async function signedInPage(
   env: Env,
   userId: string,
   url: URL,
@@ -95,7 +95,7 @@ async function dashboard(
   const uses = await directory.grantUses(grants.map((g) => g.id));
   const repositories = await directory.listRepositories(userId);
   const empty = await Promise.all(
-    repositories.map((r) => env.REPOSITORY.get(env.REPOSITORY.idFromString(r.id)).isEmpty()),
+    repositories.map((r) => repositoryObject(env, r.id).isEmpty()),
   );
 
   const what = url.searchParams.get("what") ?? "";

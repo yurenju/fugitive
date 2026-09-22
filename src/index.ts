@@ -9,11 +9,12 @@ import OAuthProvider, {
   type OAuthProviderOptions,
 } from "@cloudflare/workers-oauth-provider";
 import { checkAccess } from "./access";
-import { authorize, authorizeDone, users, type Props } from "./authorize";
-import { advertiseRefs, gitResponse } from "./repository";
+import { authorize, authorizeDone, type Props } from "./authorize";
+import { advertiseRefs, gitResponse, repositoryObject } from "./repository";
 import { idleTooLong, repositoryNameProblem, userNameProblem } from "./rules";
 import { helperScript, installScript } from "./scripts";
 import { settings } from "./settings";
+import { now, users } from "./sign-in";
 
 export { RepositoryObject } from "./repository";
 export { Users } from "./users";
@@ -84,9 +85,9 @@ async function git(request: Request, env: Env, match: RegExpExecArray): Promise<
     if (!id) return gitResponse(`${service}-advertisement`, advertiseRefs(service, new Map()));
   } else {
     // ADR 0008: register at the start of the push, before any data is written.
-    id = await users(env).findOrCreateRepository(userId, name, Math.floor(Date.now() / 1000));
+    id = await users(env).findOrCreateRepository(userId, name, now());
   }
-  return env.REPOSITORY.get(env.REPOSITORY.idFromString(id)).fetch(request);
+  return repositoryObject(env, id).fetch(request);
 }
 
 const defaultHandler: ExportedHandler<Env> = {
@@ -122,14 +123,14 @@ const options: OAuthProviderOptions<Env> = {
   allowPlainPKCE: false,
   async tokenExchangeCallback({ grantType, grantId, userId, props }) {
     if (grantType !== GrantType.REFRESH_TOKEN) return;
-    const now = Math.floor(Date.now() / 1000);
+    const at = now();
     const p = props as Props;
-    if (idleTooLong(p.lastUsedAt, now)) {
+    if (idleTooLong(p.lastUsedAt, at)) {
       await getOAuthApi<Env>(options, workerEnv as Env).revokeGrant(grantId, userId);
       throw new OAuthError("invalid_grant", { description: "unused for more than 90 days; sign in again" });
     }
-    await users(workerEnv).touchGrant(grantId, now);
-    return { newProps: { ...p, lastUsedAt: now } satisfies Props };
+    await users(workerEnv).touchGrant(grantId, at);
+    return { newProps: { ...p, lastUsedAt: at } satisfies Props };
   },
 };
 

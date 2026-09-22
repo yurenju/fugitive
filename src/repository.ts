@@ -82,6 +82,11 @@ export class RepositoryObject extends DurableObject<Env> {
   }
 }
 
+/** The Durable Object of the Repository with this Repository ID. */
+export function repositoryObject(env: Pick<Env, "REPOSITORY">, id: string) {
+  return env.REPOSITORY.get(env.REPOSITORY.idFromString(id));
+}
+
 /** The v0 ref advertisement. The Worker also sends it with no refs, for a push to a Repository that doesn't exist yet. */
 export function advertiseRefs(service: string, refs: Map<string, string>, head?: string): Uint8Array {
   let caps = `${service === "git-upload-pack" ? UPLOAD_CAPABILITIES_V0 : RECEIVE_CAPABILITIES} ${AGENT}`;

@@ -1,10 +1,10 @@
 // The Authorization Page: one question per page (email → code, and a name for new Users → approve), all at
 // /authorize. The OAuth request rides along in the form action's query string and is re-validated on every POST.
 import { AuthorizationError, type AuthRequest, type ClientInfo } from "@cloudflare/workers-oauth-provider";
-import { sendCode } from "./email";
 import { codeForm, emailForm, esc, hidden, page } from "./pages";
+import { codeError, formField, mailCode, now, users } from "./sign-in";
 import { sign, verify } from "./signing";
-import type { Redeemed, User } from "./users";
+import type { User } from "./users";
 
 export const TICKET_TTL_SECONDS = 600;
 
@@ -23,12 +23,6 @@ interface Ticket {
 
 type Scope = ["read"] | ["read", "write"];
 
-const now = () => Math.floor(Date.now() / 1000);
-
-export function users(env: Pick<Env, "USERS">) {
-  return env.USERS.getByName("global");
-}
-
 function clientName(client: ClientInfo): string {
   return client.clientName || "An unnamed tool";
 }
@@ -36,33 +30,6 @@ function clientName(client: ClientInfo): string {
 /** A tool that asks for nothing gets write; one that asks only for read gets only read (ADR 0007). */
 function offersWrite(request: AuthRequest): boolean {
   return request.scope.length === 0 || request.scope.includes("write");
-}
-
-export function codeError(r: Exclude<Redeemed, { ok: true }>): string {
-  switch (r.reason) {
-    case "wrong":
-      return `That code is not right. ${r.remaining} ${r.remaining === 1 ? "try" : "tries"} left.`;
-    case "too-many":
-      return "Too many wrong codes. Ask for a new code.";
-    case "no-code":
-      return "This code has expired or was already used. Ask for a new code.";
-    case "needs-name":
-      return "Choose a user name to create your account.";
-    case "name-invalid":
-      return r.detail;
-    case "name-taken":
-      return "That name is taken. Choose another.";
-  }
-}
-
-/** Ask for a code and mail it. Returns an error message for the page, if any. */
-export async function mailCode(env: Env, email: string): Promise<{ askName: boolean; error?: string; notice?: string }> {
-  const r = await users(env).requestCode(email, now());
-  if (r.tooSoon) return { askName: r.askName, notice: "A code was sent less than a minute ago. Wait before asking for another." };
-  if (r.code && !(await sendCode(env, email.trim().toLowerCase(), r.code))) {
-    return { askName: r.askName, error: "We could not send the email. Please try again later." };
-  }
-  return { askName: r.askName };
 }
 
 export async function authorize(request: Request, env: Env): Promise<Response> {
@@ -92,7 +59,7 @@ export async function authorize(request: Request, env: Env): Promise<Response> {
   if (request.method === "GET") return signIn();
 
   const form = await request.formData();
-  const field = (k: string) => (typeof form.get(k) === "string" ? (form.get(k) as string) : "");
+  const field = formField(form);
   const email = field("email");
 
   switch (field("step")) {

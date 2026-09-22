@@ -309,6 +309,16 @@ describe("verification codes", () => {
     expect(await submit(code)).toContain("expired or was already used");
   });
 
+  it("says nothing about asking too soon, which would give away who is on the allowlist", async () => {
+    const u = await signUp(nextEmail());
+    const a = await authorization(await registerClient());
+    await post(a.path, { step: "email", email: u.email });
+    const soon = await (await post(a.path, { step: "email", email: u.email })).text();
+    expect(mailTo(u.email)).toHaveLength(2); // signing up, then the first request here; not the second
+    const stranger = await (await post(a.path, { step: "email", email: "stranger@example.com" })).text();
+    expect(soon.replaceAll(u.email, "E")).toBe(stranger.replaceAll("stranger@example.com", "E"));
+  });
+
   it("expires after 10 minutes", async () => {
     const { email, submit } = await codePage();
     await runInDurableObject(users(), (_, s) => s.storage.sql.exec("UPDATE codes SET expires_at = ?", now() - 1));
@@ -325,8 +335,7 @@ describe("verification codes", () => {
   it("a new code voids the old one, but not within 60 seconds", async () => {
     const { email, a, submit } = await codePage();
     const old = lastCode(email);
-    const soon = await (await post(a.path, { step: "email", email })).text();
-    expect(soon).toContain("less than a minute ago");
+    await post(a.path, { step: "email", email });
     expect(mailTo(email)).toHaveLength(1);
     await allowNewCode();
     await post(a.path, { step: "email", email });
