@@ -39,6 +39,8 @@ th{color:var(--muted);font-weight:400}
 td form{display:flex;gap:6px;margin:0}
 td input[type=text]{margin:0;padding:6px 8px;min-width:0}
 td button{width:auto;padding:6px 12px}
+time{white-space:nowrap}
+@media (max-width:480px){.card{padding:20px}.wide-only{display:none}}
 `;
 
 export function page(title: string, body: string, opts: { status?: number; wide?: boolean; host: string; headers?: HeadersInit }) {

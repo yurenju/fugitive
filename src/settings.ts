@@ -25,7 +25,11 @@ function done(kind: string, what: string): Response {
   return seeOther(`/settings?${new URLSearchParams({ done: kind, what })}`);
 }
 
-const date = (seconds: number) => new Date(seconds * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC";
+// Day only: "last used" is only as fresh as the last refresh, about an hour; the full time is in the tooltip.
+const date = (seconds: number) => {
+  const iso = new Date(seconds * 1000).toISOString();
+  return `<time datetime="${iso}" title="${iso.slice(0, 16).replace("T", " ")} UTC">${iso.slice(0, 10)}</time>`;
+};
 
 export async function settings(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -114,13 +118,13 @@ async function signedInPage(
   const toolRows = grants
     .map(
       (g) => `<tr><td>${esc(g.metadata?.clientName ?? g.clientId)}</td><td>${g.scope.includes("write") ? "write" : "read"}</td>
-<td>${date(g.createdAt)}</td><td>${date(uses[g.id] ?? g.createdAt)}</td>
+<td class="wide-only">${date(g.createdAt)}</td><td>${date(uses[g.id] ?? g.createdAt)}</td>
 <td><form method="post" action="/settings/revoke">${hidden("grant", g.id)}<button type="submit" class="secondary">Revoke</button></form></td></tr>`,
     )
     .join("\n");
   const repositoryRows = repositories
     .map(
-      (r, i) => `<tr><td>${esc(r.name)}${empty[i] ? ' <span class="muted">(empty)</span>' : ""}</td><td>${date(r.createdAt)}</td>
+      (r, i) => `<tr><td>${esc(r.name)}${empty[i] ? ' <span class="muted">(empty)</span>' : ""}</td><td class="wide-only">${date(r.createdAt)}</td>
 <td><form method="post" action="/settings/delete">${hidden("repository", r.name)}
 <input type="text" name="confirm" placeholder="${esc(r.name)}" aria-label="Type ${esc(r.name)} to delete it" autocomplete="off" required>
 <button type="submit" class="danger">Delete</button></form></td></tr>`,
@@ -134,14 +138,14 @@ ${banner}
 <h2>Tools</h2>
 ${
   grants.length
-    ? `<div class="table"><table><thead><tr><th>Tool</th><th>Scope</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+    ? `<div class="table"><table><thead><tr><th>Tool</th><th>Scope</th><th class="wide-only">Created</th><th>Last used</th><th></th></tr></thead>
 <tbody>${toolRows}</tbody></table></div>`
     : `<p class="muted">No tools yet.</p>`
 }
 <h2>Repositories</h2>
 ${
   repositories.length
-    ? `<div class="table"><table><thead><tr><th>Name</th><th>Created</th><th>Delete (type the name)</th></tr></thead>
+    ? `<div class="table"><table><thead><tr><th>Name</th><th class="wide-only">Created</th><th>Delete (type the name)</th></tr></thead>
 <tbody>${repositoryRows}</tbody></table></div>
 <p class="muted">Deleting a repository cannot be undone.</p>`
     : `<p class="muted">No repositories yet. Push to /@${esc(user.name)}/&lt;name&gt;.git to create one.</p>`
