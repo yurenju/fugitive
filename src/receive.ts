@@ -8,6 +8,7 @@ import {
   isOid,
   objectHeader,
   OFS_DELTA,
+  parseCommit,
   REF_DELTA,
   referencedOids,
   TYPE_CODE,
@@ -99,7 +100,7 @@ async function indexPack(store: Store, packId: number, end: number, yieldEvery: 
   if (version !== 2 && version !== 3) throw new UnpackError(`unsupported pack version ${version}`);
   const count = view.getUint32(8);
 
-  store.startIndexing(packId);
+  await store.startIndexing(packId);
   const oidAt = new Map<number, string>();
   const pending: Entry[] = [];
 
@@ -268,12 +269,47 @@ export function updateRefs(store: Store, commands: Command[], atomic: boolean): 
   });
 }
 
+/**
+ * Whether moving these refs may have left objects no ref reaches, so GC should run. Only a proof of a fast-forward
+ * clears a moved ref: walking back from the new commit through commits this push's pack brought reaches the old one.
+ * Anything else (deleted refs, a pack whose refs all failed) counts; a wrong guess only costs one extra GC.
+ */
+export async function mayLeaveGarbage(
+  store: Store,
+  commands: Command[],
+  results: Map<string, string | null>,
+  packId: number | null,
+): Promise<boolean> {
+  const moved = commands.filter((c) => results.get(c.ref) === null);
+  if (packId !== null && !moved.length) return true;
+  for (const cmd of moved) {
+    if (cmd.old === ZERO_OID) continue;
+    if (cmd.new === ZERO_OID || packId === null || !(await fastForward(store, packId, cmd.old, cmd.new))) return true;
+  }
+  return false;
+}
+
+async function fastForward(store: Store, packId: number, old: string, next: string): Promise<boolean> {
+  const seen = new Set<string>();
+  const stack = [next];
+  while (stack.length) {
+    const oid = stack.pop()!;
+    if (oid === old) return true;
+    if (seen.has(oid)) continue;
+    seen.add(oid);
+    const row = store.row(oid);
+    if (row?.pack_id !== packId || row.type !== TYPE_CODE.commit) continue;
+    stack.push(...parseCommit((await store.load(oid)).data).parents);
+  }
+  return false;
+}
+
 export async function receivePack(
   store: Store,
   body: ReadableStream<Uint8Array>,
   contentLength: number | undefined,
   yieldEvery?: () => Promise<void>,
-): Promise<Uint8Array> {
+): Promise<{ report: Uint8Array; garbage: boolean }> {
   const reader = new StreamReader(body.getReader());
   const commands: Command[] = [];
   let caps = new Set<string>();
@@ -294,9 +330,10 @@ export async function receivePack(
   }
 
   let unpackError: string | null = null;
+  let packId: number | null = null;
   if (commands.some((c) => c.new !== ZERO_OID)) {
     try {
-      await ingestPack(store, reader.rest(), contentLength, yieldEvery);
+      packId = await ingestPack(store, reader.rest(), contentLength, yieldEvery);
     } catch (e) {
       // Whatever layer a bad pack fails in, report it to git through the protocol rather than as HTTP 500.
       unpackError = e instanceof Error ? e.message : String(e);
@@ -315,6 +352,7 @@ export async function receivePack(
     report.push(pkt(err ? `ng ${cmd.ref} ${err}\n` : `ok ${cmd.ref}\n`));
   }
   report.push(FLUSH);
-  if (!caps.has("side-band-64k")) return concat(report);
-  return concat([...sideband(1, concat(report)), FLUSH]);
+  const garbage = await mayLeaveGarbage(store, commands, results, packId);
+  if (!caps.has("side-band-64k")) return { report: concat(report), garbage };
+  return { report: concat([...sideband(1, concat(report)), FLUSH]), garbage };
 }

@@ -48,6 +48,12 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS push_references (oid TEXT PRIMARY KEY);
 `;
 
+/** GC's bookkeeping in the meta table (see gc.ts). */
+const LAST_PACK_ID = "last_pack_id";
+const REF_MOVES = "ref_moves";
+const GC_AT = "gc_at";
+const DELETING = "deleting";
+
 /** An LRU built on Map insertion order, bounded by total bytes. */
 class Lru<V> {
   private map = new Map<string, { value: V; size: number }>();
@@ -91,6 +97,11 @@ export class Store {
   private packInfo = new Map<number, { location: PackLocation; size: number }>();
   /** The pack being indexed. Its objects must be visible while indexing (as delta bases) but it is not complete yet. */
   private indexing = -1;
+  /**
+   * The pack GC is writing. It is incomplete like a dead push's, but GC runs outside the push queue, so the next
+   * push must leave it alone. Memory is enough: if the Durable Object restarts, GC dies with it.
+   */
+  gcPack = -1;
 
   constructor(
     private storage: DurableObjectStorage,
@@ -100,6 +111,9 @@ export class Store {
   ) {
     this.sql = storage.sql;
     this.sql.exec(SCHEMA);
+    // Added with GC; Repositories created before it lack the column. null = in use, else when GC retired the pack.
+    const packs = this.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = 'packs'").one().sql;
+    if (!packs.includes("retired_at")) this.sql.exec("ALTER TABLE packs ADD COLUMN retired_at INTEGER");
   }
 
   r2Key(packId: number): string {
@@ -128,13 +142,134 @@ export class Store {
     return this.storage.transactionSync(fn);
   }
 
+  /** Every ref write goes through here, so it also counts ref moves for GC. */
   setRef(name: string, oid: string | null) {
     if (oid === null) this.sql.exec("DELETE FROM refs WHERE name = ?", name);
     else this.sql.exec("INSERT OR REPLACE INTO refs (name, oid) VALUES (?, ?)", name, oid);
+    this.setMeta(REF_MOVES, this.refMoves() + 1);
   }
 
   setHead(ref: string) {
     this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('HEAD', ?)", ref);
+  }
+
+  // ---- GC bookkeeping ----
+
+  private meta(key: string): number | undefined {
+    const value = this.sql.exec<{ value: string }>("SELECT value FROM meta WHERE key = ?", key).toArray()[0]?.value;
+    return value === undefined ? undefined : Number(value);
+  }
+
+  private setMeta(key: string, value: number) {
+    this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", key, String(value));
+  }
+
+  /** How many times any ref has moved (created, updated, deleted). */
+  refMoves(): number {
+    return this.meta(REF_MOVES) ?? 0;
+  }
+
+  /** When GC is due, if one is scheduled. */
+  gcAt(): number | undefined {
+    return this.meta(GC_AT);
+  }
+
+  setGcAt(time: number) {
+    this.setMeta(GC_AT, time);
+  }
+
+  /** Unschedule GC, unless a push has pushed it back since `time` was read. */
+  clearGcAt(time: number) {
+    this.sql.exec("DELETE FROM meta WHERE key = ? AND value = ?", GC_AT, String(time));
+  }
+
+  deleting(): boolean {
+    return this.meta(DELETING) !== undefined;
+  }
+
+  markDeleting() {
+    this.setMeta(DELETING, 1);
+  }
+
+  /** When the longest-retired pack was retired. */
+  oldestRetired(): number | undefined {
+    return this.sql.exec<{ t: number | null }>("SELECT min(retired_at) AS t FROM packs").one().t ?? undefined;
+  }
+
+  /** Delete the bytes and rows of packs retired at or before `time`, at most 1000 (R2's limit per delete). */
+  async deleteRetired(time: number) {
+    const due = this.sql
+      .exec<{ id: number; location: PackLocation }>(
+        "SELECT id, location FROM packs WHERE retired_at <= ? ORDER BY retired_at LIMIT 1000",
+        time,
+      )
+      .toArray();
+    const keys = due.filter((p) => p.location === "r2").map((p) => this.r2Key(p.id));
+    // R2 first: if it fails, the rows stay and the next alarm tries again.
+    if (keys.length) await this.bucket.delete(keys);
+    for (const { id } of due) this.forgetPack(id);
+  }
+
+  /** Delete the R2 files of this Repository that no row in packs knows about. Returns how many. */
+  async deleteOrphanedR2(): Promise<number> {
+    let deleted = 0;
+    let cursor: string | undefined;
+    do {
+      const listed = await this.bucket.list({ prefix: `${this.prefix}/packs/`, cursor, limit: 1000 });
+      const orphans = listed.objects
+        .map((o) => o.key)
+        .filter((key) => {
+          const id = /\/(\d+)\.pack$/.exec(key)?.[1];
+          return id !== undefined && !this.sql.exec("SELECT 1 FROM packs WHERE id = ?", Number(id)).toArray().length;
+        });
+      if (orphans.length) await this.bucket.delete(orphans);
+      deleted += orphans.length;
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+    return deleted;
+  }
+
+  /** The packs GC looks at: complete and not retired. */
+  livePacks(): number[] {
+    return this.sql
+      .exec<{ id: number }>("SELECT id FROM packs WHERE complete = 1 AND retired_at IS NULL ORDER BY id")
+      .toArray()
+      .map((r) => r.id);
+  }
+
+  /** Index rows of the live packs, in pack order. */
+  liveRows(): ObjectRow[] {
+    return this.sql
+      .exec<ObjectRow>(
+        `SELECT o.* FROM objects o JOIN packs p ON p.id = o.pack_id
+         WHERE p.complete = 1 AND p.retired_at IS NULL ORDER BY o.pack_id, o.data_offset`,
+      )
+      .toArray();
+  }
+
+  /** Point an object's index row at its copy in another pack. */
+  moveObject(oid: string, from: number, to: { pack_id: number; entry_type: number; data_offset: number }) {
+    this.sql.exec(
+      "UPDATE objects SET pack_id = ?, entry_type = ?, data_offset = ? WHERE oid = ? AND pack_id = ?",
+      to.pack_id,
+      to.entry_type,
+      to.data_offset,
+      oid,
+      from,
+    );
+  }
+
+  deleteObject(oid: string, packId: number) {
+    this.sql.exec("DELETE FROM objects WHERE oid = ? AND pack_id = ?", oid, packId);
+    this.objects.delete(oid);
+  }
+
+  retirePack(packId: number, time: number) {
+    this.sql.exec("UPDATE packs SET retired_at = ? WHERE id = ?", time, packId);
+  }
+
+  markComplete(packId: number) {
+    this.sql.exec("UPDATE packs SET complete = 1 WHERE id = ?", packId);
   }
 
   // ---- index ----
@@ -161,16 +296,34 @@ export class Store {
     return t === undefined ? undefined : CODE_TYPE[t];
   }
 
-  /** Start indexing a pack: clear rows left by pushes that died (their packs in R2 stay). */
-  startIndexing(packId: number) {
-    const stale = this.sql.exec<{ id: number }>("SELECT id FROM packs WHERE complete = 0 AND id != ?", packId).toArray();
-    for (const { id } of stale) {
-      this.sql.exec("DELETE FROM objects WHERE pack_id = ?", id);
-      this.sql.exec("DELETE FROM pack_chunks WHERE pack_id = ?", id);
-      this.sql.exec("DELETE FROM packs WHERE id = ?", id);
-    }
+  /**
+   * Start indexing a pack: clear what pushes that died left behind. Pushes are queued, so any other incomplete pack
+   * is dead, except the one GC is writing. Their R2 files go too; if that fails, GC's scan of R2 gets them later.
+   */
+  async startIndexing(packId: number) {
+    const stale = this.sql
+      .exec<{ id: number; location: PackLocation }>(
+        "SELECT id, location FROM packs WHERE complete = 0 AND id != ? AND id != ?",
+        packId,
+        this.gcPack,
+      )
+      .toArray();
+    for (const { id } of stale) this.forgetPack(id);
     this.sql.exec("DELETE FROM push_references");
     this.indexing = packId;
+    const keys = stale.filter((p) => p.location === "r2").map((p) => this.r2Key(p.id));
+    if (keys.length) await this.bucket.delete(keys).catch(() => {});
+  }
+
+  /** Delete a pack's rows (not its R2 file). */
+  private forgetPack(packId: number) {
+    for (const { oid } of this.sql.exec<{ oid: string }>("SELECT oid FROM objects WHERE pack_id = ?", packId).toArray()) {
+      this.objects.delete(oid);
+    }
+    this.sql.exec("DELETE FROM objects WHERE pack_id = ?", packId);
+    this.sql.exec("DELETE FROM pack_chunks WHERE pack_id = ?", packId);
+    this.sql.exec("DELETE FROM packs WHERE id = ?", packId);
+    this.packInfo.delete(packId);
   }
 
   addObject(row: ObjectRow) {
@@ -204,7 +357,7 @@ export class Store {
       )
       .toArray()[0]?.oid;
     this.sql.exec("DELETE FROM push_references");
-    if (!missing) this.sql.exec("UPDATE packs SET complete = 1 WHERE id = ?", packId);
+    if (!missing) this.markComplete(packId);
     this.indexing = -1;
     return missing;
   }
@@ -336,9 +489,14 @@ export class Store {
 
   // ---- writing packs ----
 
-  /** Create a pack and return its writer. The caller picks the location by size. */
+  /**
+   * Create a pack and return its writer. The caller picks the location by size.
+   * Ids are never reused: R2 keys are made from them, and a retired pack's file is only deleted an hour later.
+   */
   async createPack(location: PackLocation): Promise<PackWriter> {
-    const id = this.sql.exec<{ id: number }>("INSERT INTO packs (location, size) VALUES (?, 0) RETURNING id", location).one().id;
+    const id = Math.max(this.meta(LAST_PACK_ID) ?? 0, this.sql.exec<{ id: number | null }>("SELECT max(id) AS id FROM packs").one().id ?? 0) + 1;
+    this.sql.exec("INSERT INTO packs (id, location, size) VALUES (?, ?, 0)", id, location);
+    this.setMeta(LAST_PACK_ID, id);
     return location === "sqlite" ? new SqlitePackWriter(this, id) : new R2PackWriter(this, id, this.bucket);
   }
 
@@ -350,14 +508,9 @@ export class Store {
   /** Clean up what a failed push left behind (best effort). */
   async discardPack(packId: number) {
     const location = this.sql.exec<{ location: string }>("SELECT location FROM packs WHERE id = ?", packId).toArray()[0]?.location;
-    for (const { oid } of this.sql.exec<{ oid: string }>("SELECT oid FROM objects WHERE pack_id = ?", packId).toArray()) {
-      this.objects.delete(oid);
-    }
-    this.sql.exec("DELETE FROM objects WHERE pack_id = ?", packId);
-    this.sql.exec("DELETE FROM pack_chunks WHERE pack_id = ?", packId);
-    this.sql.exec("DELETE FROM packs WHERE id = ?", packId);
-    this.packInfo.delete(packId);
+    this.forgetPack(packId);
     if (this.indexing === packId) this.indexing = -1;
+    if (this.gcPack === packId) this.gcPack = -1;
     if (location === "r2") await this.bucket.delete(this.r2Key(packId)).catch(() => {});
   }
 }

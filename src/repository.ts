@@ -2,6 +2,7 @@
 // every request that gets here. The class is not called `Repository`: stage 1's class of that name was deleted
 // together with its data (spec #24).
 import { DurableObject } from "cloudflare:workers";
+import { commitGc, prepareGc } from "./gc";
 import { ZERO_OID } from "./objects";
 import { concat, FLUSH, parsePackets, pkt, ProtocolError } from "./pktline";
 import { receivePack, RECEIVE_CAPABILITIES } from "./receive";
@@ -13,6 +14,11 @@ const MAX_UPLOAD_REQUEST = 10 * 1024 * 1024;
 
 /** R2's list and delete both take at most 1000 keys at a time. */
 const DELETE_BATCH = 1000;
+
+/** GC runs this long after the last push that may have left garbage. */
+const GC_DELAY = 60 * 60 * 1000;
+/** A retired pack stays this long, so clones that started before GC committed can finish. */
+const RETIRED_FOR = 60 * 60 * 1000;
 
 export class RepositoryObject extends DurableObject<Env> {
   private store: Store;
@@ -38,11 +44,17 @@ export class RepositoryObject extends DurableObject<Env> {
         return gitResponse("git-upload-pack-result", await startStream(body));
       }
       if (url.pathname.endsWith("/git-receive-pack")) {
-        const run = this.pushes.then(() =>
-          receivePack(this.store, decoded(request), contentLength(request), () => this.breathe()),
-        );
-        this.pushes = run.catch(() => {});
-        return gitResponse("git-receive-pack-result", await run);
+        const report = await this.queue(async () => {
+          const { report, garbage } = await receivePack(this.store, decoded(request), contentLength(request), () =>
+            this.breathe(),
+          );
+          if (garbage) {
+            this.store.setGcAt(Date.now() + GC_DELAY);
+            await this.reschedule();
+          }
+          return report;
+        });
+        return gitResponse("git-receive-pack-result", report);
       }
       return new Response("not found", { status: 404 });
     } catch (e) {
@@ -57,15 +69,68 @@ export class RepositoryObject extends DurableObject<Env> {
 
   /** Deleting a Repository: returns at once; the alarm clears R2 in batches, then this object's own storage. */
   async destroy(): Promise<void> {
-    await this.ctx.storage.setAlarm(Date.now());
+    this.store.markDeleting();
+    await this.reschedule();
   }
 
+  /**
+   * One alarm serves three jobs, most urgent first: deleting the Repository (nothing else then), deleting packs
+   * retired over an hour ago, and GC once it is due. Then it is set for whichever job comes next.
+   * The platform retries a failed alarm, so a crash part way through starts that job again.
+   */
   async alarm(): Promise<void> {
-    const listed = await this.env.PACKS.list({ prefix: `${this.ctx.id.toString()}/`, limit: DELETE_BATCH });
-    if (listed.objects.length) await this.env.PACKS.delete(listed.objects.map((o) => o.key));
-    // The platform retries a failed alarm, so a crash part way through picks up where it stopped.
-    if (listed.truncated) await this.ctx.storage.setAlarm(Date.now());
-    else await this.ctx.storage.deleteAll();
+    if (this.store.deleting()) {
+      const listed = await this.env.PACKS.list({ prefix: `${this.ctx.id.toString()}/`, limit: DELETE_BATCH });
+      if (listed.objects.length) await this.env.PACKS.delete(listed.objects.map((o) => o.key));
+      if (listed.truncated) await this.ctx.storage.setAlarm(Date.now());
+      else await this.ctx.storage.deleteAll();
+      return;
+    }
+    await this.store.deleteRetired(Date.now() - RETIRED_FOR);
+    const gcAt = this.store.gcAt();
+    if (gcAt !== undefined && gcAt <= Date.now()) {
+      await this.gc();
+      this.store.clearGcAt(gcAt);
+    }
+    await this.reschedule();
+  }
+
+  private async reschedule() {
+    if (this.store.deleting()) return this.ctx.storage.setAlarm(Date.now());
+    const retired = this.store.oldestRetired();
+    const times = [this.store.gcAt(), retired === undefined ? undefined : retired + RETIRED_FOR].filter(
+      (t) => t !== undefined,
+    );
+    if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
+    else await this.ctx.storage.deleteAlarm();
+  }
+
+  /** Prepare beside pushes, commit in their queue, and log one line either way (spec #34). */
+  private async gc() {
+    const log: Record<string, unknown> = { event: "gc", repository: this.ctx.id.toString() };
+    const start = Date.now();
+    try {
+      const plan = await prepareGc(this.store);
+      log.prepareMs = Date.now() - start;
+      const committing = Date.now();
+      const committed = await this.queue(() => commitGc(this.store, plan));
+      log.commitMs = Date.now() - committing;
+      log.result = committed ? "done" : "abandoned: a push moved a ref";
+      Object.assign(log, plan.stats);
+    } catch (e) {
+      log.result = "failed";
+      log.error = e instanceof Error ? (e.stack ?? e.message) : String(e);
+      throw e;
+    } finally {
+      console.log(JSON.stringify(log));
+    }
+  }
+
+  /** Pushes to one Repository run one at a time, and GC's commit takes its turn with them. */
+  private queue<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.pushes.then(fn);
+    this.pushes = run.catch(() => {});
+    return run;
   }
 
   /** During a large push, yield after each batch and flush writes so unwritten data doesn't pile up in memory. */
