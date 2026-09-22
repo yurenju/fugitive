@@ -1,5 +1,5 @@
 // GC (ADR 0009): delete the objects no ref reaches. Prepare runs beside pushes and writes the objects to keep
-// into one new pack; commit runs in the push queue and swaps the index over, unless a ref moved in between.
+// into one new pack; commit runs in the push queue and swaps the index over, unless something changed in between.
 import { createHash } from "node:crypto";
 import { concat } from "./pktline";
 import { hexToBytes, OFS_DELTA, ofsDistance, packEntryHeader, REF_DELTA } from "./objects";
@@ -17,8 +17,8 @@ export interface GcStats {
 }
 
 export interface GcPlan {
-  /** Store.refMoves() when prepare started */
-  moves: number;
+  /** Store.changes() when prepare started */
+  changes: number;
   /** The pack with the kept objects of the rewritten packs, not yet complete; null if nothing needed rewriting. */
   newPack: number | null;
   moved: { oid: string; from: number; entry_type: number; data_offset: number }[];
@@ -29,14 +29,14 @@ export interface GcPlan {
 }
 
 export async function prepareGc(store: Store): Promise<GcPlan> {
-  const moves = store.refMoves();
+  const changes = store.changes();
   const r2Deleted = await store.deleteOrphanedR2();
 
   // ponytail: every live index row in memory at once; fine up to a few hundred thousand objects, page it after that.
   const rows = store.liveRows();
   const byOid = new Map(rows.map((r) => [r.oid, r]));
   const reachable = new Set(await reachableObjects(store));
-  const walked = reachable.size;
+  const reachableFromRefs = reachable.size;
   // A kept delta needs its base, even one no ref reaches. A Set visits what is added while iterating it.
   for (const oid of reachable) {
     const base = byOid.get(oid)?.base_oid;
@@ -45,7 +45,7 @@ export async function prepareGc(store: Store): Promise<GcPlan> {
 
   const byPack = new Map<number, ObjectRow[]>(store.livePacks().map((id) => [id, []]));
   for (const row of rows) byPack.get(row.pack_id)!.push(row);
-  const keep: ObjectRow[] = [];
+  const toCopy: ObjectRow[] = [];
   const garbage: GcPlan["garbage"] = [];
   const retire: number[] = [];
   let rewrittenPacks = 0;
@@ -55,7 +55,7 @@ export async function prepareGc(store: Store): Promise<GcPlan> {
     if (kept.length === packRows.length && kept.length) continue;
     retire.push(id);
     if (kept.length) rewrittenPacks++;
-    keep.push(...kept);
+    toCopy.push(...kept);
     for (const r of packRows) {
       if (reachable.has(r.oid)) continue;
       garbage.push({ oid: r.oid, pack_id: r.pack_id });
@@ -63,15 +63,15 @@ export async function prepareGc(store: Store): Promise<GcPlan> {
     }
   }
 
-  const { newPack, moved, size } = keep.length ? await writePack(store, keep) : { newPack: null, moved: [], size: 0 };
+  const { newPack, moved, size } = toCopy.length ? await writePack(store, toCopy) : { newPack: null, moved: [], size: 0 };
   return {
-    moves,
+    changes,
     newPack,
     moved,
     garbage,
     retire,
     stats: {
-      reachable: walked,
+      reachable: reachableFromRefs,
       deletedObjects: garbage.length,
       deletedBytes,
       rewrittenPacks,
@@ -89,7 +89,8 @@ export async function prepareGc(store: Store): Promise<GcPlan> {
 async function writePack(store: Store, rows: ObjectRow[]) {
   // Headers are at most ~30 bytes; the estimate only picks the location, like a push's Content-Length does.
   const estimate = 32 + rows.reduce((n, r) => n + r.data_len + 32, 0);
-  const writer = await store.createPack(estimate < SQLITE_PACK_LIMIT ? "sqlite" : "r2");
+  // Synchronous from creating the row to marking it, so no push's startIndexing can run in between.
+  const writer = store.createPack(estimate < SQLITE_PACK_LIMIT ? "sqlite" : "r2");
   store.gcPack = writer.id;
   const sha = createHash("sha1");
   const write = async (b: Uint8Array) => {
@@ -133,12 +134,13 @@ async function writePack(store: Store, rows: ObjectRow[]) {
 }
 
 /**
- * Swap the index over to the plan, in one transaction. Call it from the push queue. If a ref moved since prepare
- * started, give up and discard the new pack: a ref pushed back meanwhile may need objects the plan deletes (the
- * index keeps the first row for an oid, so re-sent objects still point at the packs the plan retires).
+ * Swap the index over to the plan, in one transaction. Call it from the push queue. If a ref moved or a pack
+ * completed since prepare started (Store.changes), give up and discard the new pack: a ref pushed back meanwhile
+ * may need objects the plan deletes (the index keeps the first row for an oid, so re-sent objects still point at
+ * the packs the plan retires).
  */
 export async function commitGc(store: Store, plan: GcPlan, now = Date.now()): Promise<boolean> {
-  if (store.refMoves() !== plan.moves) {
+  if (store.changes() !== plan.changes) {
     if (plan.newPack !== null) await store.discardPack(plan.newPack);
     return false;
   }

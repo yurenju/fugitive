@@ -6,17 +6,16 @@ import { commitGc, prepareGc } from "./gc";
 import { ZERO_OID } from "./objects";
 import { concat, FLUSH, parsePackets, pkt, ProtocolError } from "./pktline";
 import { receivePack, RECEIVE_CAPABILITIES } from "./receive";
-import { Store } from "./store";
+import { R2_BATCH, Store } from "./store";
 import { AGENT, UPLOAD_CAPABILITIES_V0, uploadPackV0, uploadPackV2, V2_CAPABILITIES } from "./upload";
 
 /** upload-pack requests are just short want/have lines; they should never be large. */
 const MAX_UPLOAD_REQUEST = 10 * 1024 * 1024;
 
-/** R2's list and delete both take at most 1000 keys at a time. */
-const DELETE_BATCH = 1000;
-
 /** GC runs this long after the last push that may have left garbage. */
 const GC_DELAY = 60 * 60 * 1000;
+/** The platform retries a failed alarm up to 6 times; retryCount counts from 0. */
+const LAST_RETRY = 5;
 /** A retired pack stays this long, so clones that started before GC committed can finish. */
 const RETIRED_FOR = 60 * 60 * 1000;
 
@@ -78,9 +77,9 @@ export class RepositoryObject extends DurableObject<Env> {
    * retired over an hour ago, and GC once it is due. Then it is set for whichever job comes next.
    * The platform retries a failed alarm, so a crash part way through starts that job again.
    */
-  async alarm(): Promise<void> {
+  async alarm(info?: AlarmInvocationInfo): Promise<void> {
     if (this.store.deleting()) {
-      const listed = await this.env.PACKS.list({ prefix: `${this.ctx.id.toString()}/`, limit: DELETE_BATCH });
+      const listed = await this.env.PACKS.list({ prefix: `${this.ctx.id.toString()}/`, limit: R2_BATCH });
       if (listed.objects.length) await this.env.PACKS.delete(listed.objects.map((o) => o.key));
       if (listed.truncated) await this.ctx.storage.setAlarm(Date.now());
       else await this.ctx.storage.deleteAll();
@@ -89,7 +88,12 @@ export class RepositoryObject extends DurableObject<Env> {
     await this.store.deleteRetired(Date.now() - RETIRED_FOR);
     const gcAt = this.store.gcAt();
     if (gcAt !== undefined && gcAt <= Date.now()) {
-      await this.gc();
+      try {
+        await this.gc();
+      } catch (e) {
+        // Let the platform retry; after the last retry, wait for the next trigger but keep the other jobs scheduled.
+        if ((info?.retryCount ?? 0) < LAST_RETRY) throw e;
+      }
       this.store.clearGcAt(gcAt);
     }
     await this.reschedule();
@@ -126,7 +130,7 @@ export class RepositoryObject extends DurableObject<Env> {
     }
   }
 
-  /** Pushes to one Repository run one at a time, and GC's commit takes its turn with them. */
+  /** Run after the pushes already queued; GC's commit takes its turn here too. */
   private queue<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.pushes.then(fn);
     this.pushes = run.catch(() => {});

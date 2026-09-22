@@ -63,7 +63,7 @@ export async function ingestPack(
 ): Promise<number | null> {
   // Step 1: store the bytes while computing the checksum (the last 20 bytes are the checksum itself).
   const location = contentLength !== undefined && contentLength < SQLITE_PACK_LIMIT ? "sqlite" : "r2";
-  const writer = await store.createPack(location);
+  const writer = store.createPack(location);
   const sha = createHash("sha1");
   let tail = new Uint8Array(0);
   let total = 0;

@@ -179,16 +179,21 @@ describe("push", () => {
   });
 });
 
+/** basePack with its first object's zlib header broken and the checksum fixed up: it fails while being indexed. */
+async function corruptZlib(): Promise<Uint8Array> {
+  const corrupt = basePack.slice();
+  // The first object's compressed data starts around byte 14.
+  corrupt[14] ^= 0xff;
+  corrupt[15] ^= 0xff;
+  const body = corrupt.subarray(0, corrupt.length - 20);
+  corrupt.set(new Uint8Array(await crypto.subtle.digest("SHA-1", body)), corrupt.length - 20);
+  return corrupt;
+}
+
 describe("review fixes", () => {
   it("reports a pack with a valid checksum but corrupt zlib data as an unpack error", async () => {
     const repository = fresh();
-    const corrupt = basePack.slice();
-    // The first object's compressed data starts around byte 14; break its zlib header.
-    corrupt[14] ^= 0xff;
-    corrupt[15] ^= 0xff;
-    const body = corrupt.subarray(0, corrupt.length - 20);
-    corrupt.set(new Uint8Array(await crypto.subtle.digest("SHA-1", body)), corrupt.length - 20);
-    const [unpack, ref] = await push(repository, [`${ZERO_OID} ${c1} refs/heads/main`], corrupt);
+    const [unpack, ref] = await push(repository, [`${ZERO_OID} ${c1} refs/heads/main`], await corruptZlib());
     expect(unpack).toMatch(/^unpack (?!ok)/);
     expect(ref).toBe("ng refs/heads/main unpacker error");
   });
@@ -297,6 +302,8 @@ async function fetchOids(repository: string, want: string): Promise<string[] | s
 
 const objectsOf = (commit: string) => [...fx.objects[commit]].sort();
 
+const storeOf = (instance: RepositoryObject) => (instance as unknown as { store: Store }).store;
+
 describe("GC", () => {
   it("is not scheduled by pushes that only create branches or move them forward", async () => {
     const repository = fresh();
@@ -360,26 +367,40 @@ describe("GC", () => {
     await push(repository, [`${ZERO_OID} ${c1} refs/heads/main`], basePack);
     await push(repository, [`${c1} ${c0} refs/heads/main`], null);
     const stub = await repositoryStub(repository);
-    const store = (instance: RepositoryObject) => (instance as unknown as { store: Store }).store;
 
-    const plan = await runInDurableObject(stub, (instance) => prepareGc(store(instance)));
+    const plan = await runInDurableObject(stub, (instance) => prepareGc(storeOf(instance)));
     // The client sends c1's objects again; the index keeps its rows, which point at the packs GC planned to retire.
     expect(await push(repository, [`${c0} ${c1} refs/heads/main`], basePack)).toEqual(["unpack ok", "ok refs/heads/main"]);
-    expect(await runInDurableObject(stub, (instance) => commitGc(store(instance), plan))).toBe(false);
+    expect(await runInDurableObject(stub, (instance) => commitGc(storeOf(instance), plan))).toBe(false);
     expect(await fetchOids(repository, c1)).toEqual(objectsOf(c1));
   });
 
-  it("a push that moves no ref between prepare and commit leaves the pack GC is writing alone", async () => {
+  it("also gives up when a rejected push stored a pack meanwhile: its deltas may use objects GC would delete", async () => {
     const repository = fresh();
     await push(repository, [`${ZERO_OID} ${c1} refs/heads/main`], basePack);
     await push(repository, [`${c1} ${c0} refs/heads/main`], null);
     const stub = await repositoryStub(repository);
-    const store = (instance: RepositoryObject) => (instance as unknown as { store: Store }).store;
 
-    const plan = await runInDurableObject(stub, (instance) => prepareGc(store(instance)));
-    // Carries a pack, so it clears incomplete packs when it starts; the new pack is incomplete until commit.
+    const plan = await runInDurableObject(stub, (instance) => prepareGc(storeOf(instance)));
+    // thinPack's deltas are against c1's objects, which the plan deletes; main is at c0, so the ref update fails.
     expect(await push(repository, [`${c1} ${c2} refs/heads/main`], thinPack)).toEqual(["unpack ok", "ng refs/heads/main fetch first"]);
-    expect(await runInDurableObject(stub, (instance) => commitGc(store(instance), plan))).toBe(true);
+    expect(await runInDurableObject(stub, (instance) => commitGc(storeOf(instance), plan))).toBe(false);
+    // Pointing a ref at the rejected push's commit now works, and it reads back whole.
+    expect(await push(repository, [`${ZERO_OID} ${c2} refs/heads/later`], null)).toEqual(["unpack ok", "ok refs/heads/later"]);
+    expect(await fetchOids(repository, c2)).toEqual(objectsOf(c2));
+  });
+
+  it("a push that dies between prepare and commit leaves the pack GC is writing alone", async () => {
+    const repository = fresh();
+    await push(repository, [`${ZERO_OID} ${c1} refs/heads/main`], basePack);
+    await push(repository, [`${c1} ${c0} refs/heads/main`], null);
+    const stub = await repositoryStub(repository);
+
+    const plan = await runInDurableObject(stub, (instance) => prepareGc(storeOf(instance)));
+    // It clears incomplete packs when it starts indexing; GC's new pack is incomplete until commit.
+    const [unpack] = await push(repository, [`${c0} ${c1} refs/heads/main`], await corruptZlib());
+    expect(unpack).toMatch(/^unpack (?!ok)/);
+    expect(await runInDurableObject(stub, (instance) => commitGc(storeOf(instance), plan))).toBe(true);
     expect(await fetchOids(repository, c0)).toEqual(objectsOf(c0));
   });
 

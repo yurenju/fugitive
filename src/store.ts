@@ -7,6 +7,8 @@ import { applyDelta, CODE_TYPE, type ObjectType } from "./objects";
 export const BLOCK_SIZE = 1024 * 1024;
 /** A push with a Content-Length below this stores its pack in SQLite. */
 export const SQLITE_PACK_LIMIT = 16 * 1024 * 1024;
+/** R2's list and delete both take at most 1000 keys at a time. */
+export const R2_BATCH = 1000;
 /** R2 multipart part size (every part but the last must be the same size). */
 const R2_PART_SIZE = 8 * 1024 * 1024;
 
@@ -50,7 +52,7 @@ CREATE TABLE IF NOT EXISTS push_references (oid TEXT PRIMARY KEY);
 
 /** GC's bookkeeping in the meta table (see gc.ts). */
 const LAST_PACK_ID = "last_pack_id";
-const REF_MOVES = "ref_moves";
+const CHANGES = "changes";
 const GC_AT = "gc_at";
 const DELETING = "deleting";
 
@@ -142,11 +144,11 @@ export class Store {
     return this.storage.transactionSync(fn);
   }
 
-  /** Every ref write goes through here, so it also counts ref moves for GC. */
+  /** Every ref write goes through here, so it also counts as a change for GC. */
   setRef(name: string, oid: string | null) {
     if (oid === null) this.sql.exec("DELETE FROM refs WHERE name = ?", name);
     else this.sql.exec("INSERT OR REPLACE INTO refs (name, oid) VALUES (?, ?)", name, oid);
-    this.setMeta(REF_MOVES, this.refMoves() + 1);
+    this.countChange();
   }
 
   setHead(ref: string) {
@@ -164,9 +166,17 @@ export class Store {
     this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", key, String(value));
   }
 
-  /** How many times any ref has moved (created, updated, deleted). */
-  refMoves(): number {
-    return this.meta(REF_MOVES) ?? 0;
+  /**
+   * How many times a ref moved (created, updated, deleted) or a pack became complete. GC gives up if this changes
+   * while it prepares: a new complete pack can hold a delta against an object GC is about to delete, even if no ref
+   * moved (its push was rejected), and a later push that points a ref at it would pass the connectivity check.
+   */
+  changes(): number {
+    return this.meta(CHANGES) ?? 0;
+  }
+
+  private countChange() {
+    this.setMeta(CHANGES, this.changes() + 1);
   }
 
   /** When GC is due, if one is scheduled. */
@@ -196,12 +206,13 @@ export class Store {
     return this.sql.exec<{ t: number | null }>("SELECT min(retired_at) AS t FROM packs").one().t ?? undefined;
   }
 
-  /** Delete the bytes and rows of packs retired at or before `time`, at most 1000 (R2's limit per delete). */
+  /** Delete the bytes and rows of packs retired at or before `time`, one R2 batch at a time. */
   async deleteRetired(time: number) {
     const due = this.sql
       .exec<{ id: number; location: PackLocation }>(
-        "SELECT id, location FROM packs WHERE retired_at <= ? ORDER BY retired_at LIMIT 1000",
+        "SELECT id, location FROM packs WHERE retired_at <= ? ORDER BY retired_at LIMIT ?",
         time,
+        R2_BATCH,
       )
       .toArray();
     const keys = due.filter((p) => p.location === "r2").map((p) => this.r2Key(p.id));
@@ -215,7 +226,7 @@ export class Store {
     let deleted = 0;
     let cursor: string | undefined;
     do {
-      const listed = await this.bucket.list({ prefix: `${this.prefix}/packs/`, cursor, limit: 1000 });
+      const listed = await this.bucket.list({ prefix: `${this.prefix}/packs/`, cursor, limit: R2_BATCH });
       const orphans = listed.objects
         .map((o) => o.key)
         .filter((key) => {
@@ -357,7 +368,10 @@ export class Store {
       )
       .toArray()[0]?.oid;
     this.sql.exec("DELETE FROM push_references");
-    if (!missing) this.markComplete(packId);
+    if (!missing) {
+      this.markComplete(packId);
+      this.countChange();
+    }
     this.indexing = -1;
     return missing;
   }
@@ -493,7 +507,7 @@ export class Store {
    * Create a pack and return its writer. The caller picks the location by size.
    * Ids are never reused: R2 keys are made from them, and a retired pack's file is only deleted an hour later.
    */
-  async createPack(location: PackLocation): Promise<PackWriter> {
+  createPack(location: PackLocation): PackWriter {
     const id = Math.max(this.meta(LAST_PACK_ID) ?? 0, this.sql.exec<{ id: number | null }>("SELECT max(id) AS id FROM packs").one().id ?? 0) + 1;
     this.sql.exec("INSERT INTO packs (id, location, size) VALUES (?, ?, 0)", id, location);
     this.setMeta(LAST_PACK_ID, id);
