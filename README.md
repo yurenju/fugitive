@@ -18,6 +18,25 @@ The installer puts a credential helper in place and writes git config for this h
 - `~/.local/share/fugitive/git-credential-fugitive logout` revokes this machine's token; `login` signs in again.
 - Without a terminal (an IDE's background git, CI), the helper can't sign in; run its `login` in a terminal once, and the refresh token carries on from there.
 
+### Importing more than 100 MB
+
+A single push is one HTTP request, and on Cloudflare's Free plan requests over 100 MB are rejected before they reach the host. When that happens git prints `HTTP 413` followed by a misleading `Everything up-to-date`; nothing was pushed. No single file can be larger than 100 MB.
+
+To import more than that, split it across commits and push them one at a time. Keep each commit under about 30 MB (check with `du -sh <dir>` before adding): large pushes take minutes to process, pushes near 100 MB are untested, and a dropped connection then costs little.
+
+```sh
+git init
+git remote add origin https://<host>/@<owner>/<repository>.git
+git add docs && git commit -m "Add docs"
+git add images && git commit -m "Add images"
+git add . && git commit -m "Add the rest"
+git branch -M main
+for c in $(git rev-list --reverse --topo-order HEAD --not --remotes=origin); do git push origin "$c:refs/heads/main" || break; done
+git push -u origin main
+```
+
+The loop pushes the commits the host doesn't have yet, oldest first, and stops at the first failure; run it again to carry on from there. The last line only sets up tracking, so plain `git push` works afterwards. Only the first import needs this; everyday pushes are small.
+
 ## Development
 
 ```sh
