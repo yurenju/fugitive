@@ -25,6 +25,8 @@ declare global {
     OAUTH_PROVIDER: OAuthHelpers;
     /** The package's name for its KV; see oauthEnv(). */
     OAUTH_KV: KVNamespace;
+    /** Test-only override of the resend wait; deliberately not in wrangler.jsonc. See codeResendSeconds(). */
+    CODE_RESEND_SECONDS?: string;
   }
 }
 

@@ -46,7 +46,7 @@ RESEND=$!
 (cd "$ROOT" && exec setsid npx wrangler dev --ip 127.0.0.1 --port "$PORT" --persist-to "$WORK/state" \
   --var "RESEND_API_URL:http://127.0.0.1:$MAIL_PORT" --var "RESEND_API_KEY:e2e-key" \
   --var "EMAIL_FROM:fugitive <noreply@fugitive.test>" --var "SESSION_SECRET:e2e-secret" \
-  --var "REGISTRATION_ALLOWLIST:tester@example.com,second@example.com" >"$LOG" 2>&1) &
+  --var "REGISTRATION_ALLOWLIST:tester@example.com,second@example.com" --var "CODE_RESEND_SECONDS:0" >"$LOG" 2>&1) &
 SERVER=$!
 for _ in $(seq 1 120); do
   curl -fs "$ORIGIN/install.sh" >/dev/null 2>&1 && break
@@ -57,15 +57,9 @@ curl -fs "$ORIGIN/install.sh" >/dev/null || fail "wrangler dev did not start"
 # ---- playing the person at the keyboard ----
 field_in() { sed -n "s/.*name=\"$1\" value=\"\([^\"]*\)\".*/\1/p" | head -n 1; }
 latest_code() { grep "^$1 " "$MAIL" | tail -n 1 | cut -d' ' -f2; }
-# The server mails an address at most once a minute, so wait out the rest of that minute before asking again.
+# CODE_RESEND_SECONDS:0 above lets the same address get a new code right away.
 request_code() { # request_code <url of a page with the email step> <email>
-  local stamp="$WORK/sent-$2" left
-  if [ -f "$stamp" ]; then
-    left=$(($(cat "$stamp") + 61 - $(date +%s)))
-    [ "$left" -gt 0 ] && sleep "$left"
-  fi
   curl -fsS -d step=email --data-urlencode "email=$2" "$1" >/dev/null
-  date +%s >"$stamp"
 }
 
 # Walk the Authorization Page for an /authorize URL; print the code /authorize/done shows.

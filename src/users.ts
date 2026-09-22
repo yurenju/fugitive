@@ -7,6 +7,14 @@ export const CODE_TTL_SECONDS = 600;
 export const CODE_RESEND_SECONDS = 60;
 export const MAX_CODE_FAILURES = 5;
 
+/**
+ * The resend wait, which the e2e run sets to 0 with CODE_RESEND_SECONDS. It also caps guessing, since each new code
+ * resets the failure count, so anything but a whole number of seconds falls back to the default instead of to no wait.
+ */
+export function codeResendSeconds(raw: string | undefined): number {
+  return raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : CODE_RESEND_SECONDS;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -87,7 +95,7 @@ export class Users extends DurableObject<Env> {
       const listed = allowlisted(this.env.REGISTRATION_ALLOWLIST, email);
       const askName = !registered && listed;
       const last = this.sql.exec<{ sent_at: number }>("SELECT sent_at FROM codes WHERE email = ?", email).toArray()[0];
-      if (last && now - last.sent_at < CODE_RESEND_SECONDS) return { tooSoon: true, code: null, askName };
+      if (last && now - last.sent_at < codeResendSeconds(this.env.CODE_RESEND_SECONDS)) return { tooSoon: true, code: null, askName };
       if (!registered && !listed) return { tooSoon: false, code: null, askName };
       this.sql.exec(
         "INSERT OR REPLACE INTO codes (email, hash, expires_at, failures, sent_at) VALUES (?, ?, ?, 0, ?)",

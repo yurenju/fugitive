@@ -5,6 +5,7 @@ import { describe, expect, inject, it } from "vitest";
 import { ZERO_OID } from "../src/objects";
 import { concat, FLUSH, pkt } from "../src/pktline";
 import { sign } from "../src/signing";
+import { CODE_RESEND_SECONDS, codeResendSeconds } from "../src/users";
 import {
   approve,
   authorization,
@@ -343,6 +344,12 @@ describe("verification codes", () => {
     const fresh = lastCode(email);
     if (fresh !== old) expect(await submit(old)).toContain("not right");
     expect(await submit(fresh)).toContain("Approve");
+  });
+
+  it("the resend wait can be lowered for tests, but a bad value keeps the default rather than dropping the wait", () => {
+    expect(codeResendSeconds(undefined)).toBe(CODE_RESEND_SECONDS);
+    expect(codeResendSeconds("0")).toBe(0);
+    for (const bad of ["", " ", "abc", "-1", "1.5", "60s"]) expect(codeResendSeconds(bad)).toBe(CODE_RESEND_SECONDS);
   });
 });
 
