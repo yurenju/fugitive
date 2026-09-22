@@ -12,4 +12,5 @@
 
 - git 會把 `@` 原封不動放進路徑送出（git 2.53.0 實測：`/@yurenju/notes.git/info/refs?service=git-upload-pack`），不會誤認成網址裡「帳號@主機」的寫法，因為那種寫法只出現在主機名稱前面。
 - 名稱本身不含 `@`：`@` 只是網址上的標記，存下來的名稱、權杖上帶的名稱、畫面上顯示的名稱都是 `yurenju`，不是 `@yurenju`。
-- 第一段的網址 `/<owner>/<repository>.git` 會失效。目前只有正式環境上兩個驗收用的測試 repo 在用；要不要連它們的 Durable Object 名稱一起改，由第二段的規格決定。
+- 目前上線的第一階段用的網址 `/<owner>/<repository>.git` 會失效。現在只有正式環境上兩個驗收用的測試 repo 在用；要不要連它們的 Durable Object 名稱一起改，由第二階段（帳號）的規格決定。
+- 名稱允許哪些字元（小寫英文、數字、`-`，不能用 `-` 開頭等）記在 [使用者名稱的規則](https://github.com/yurenju/fugitive/issues/16) 的結論裡。
