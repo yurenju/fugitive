@@ -15,6 +15,6 @@
 - 伺服器會存權杖（或它的雜湊），要做期限與撤銷。ADR 0002「伺服器不存任何可以拿來冒用身分的東西」這條不再成立。
 - 每組權杖都帶權限範圍（scope），例如只讀寫某一個 repo，所以可以只把一部分權限交給 agent。要分哪些 scope、建立或刪除 repo 這類動作要哪個 scope，以及存取權杖與 refresh token 各多久有效，另外決定。
 - 無人值守的機器靠 refresh token 續用：每次換新的存取權杖時也換一組新的 refresh token，期限從那一刻重算，所以只要在期限內用過一次就不會失效。helper 換權杖時要加檔案鎖，否則同一台機器上同時跑的兩個 `git` 指令會拿同一組 refresh token 去換，後換的會失敗。
-- helper 自己把權杖存在檔案裡，不交給系統的密碼管理工具（例如 macOS 的 Keychain），所以不受 git 版本對 refresh token 支援的限制；權杖當 Basic 密碼送出，任何版本的 git 都收。沒有瀏覽器的機器用 device flow（RFC 8628）核准。
+- helper 自己把權杖存在檔案裡，不交給系統的密碼管理工具（例如 macOS 的 Keychain），所以不受 git 版本對 refresh token 支援的限制；權杖當 Basic 密碼送出，任何版本的 git 都收。沒有瀏覽器的機器用 device flow（RFC 8628）核准。（後來改成手動貼碼，見 [ADR 0005](0005-workers-oauth-provider-on-kv-first.md)。）
 - 授權頁是一個網頁，註冊（email 在註冊白名單上、還沒註冊成使用者時）也在這一頁完成。「帳號流程沒有畫面」改成「只有授權頁這一個畫面」。
 - OAuth 伺服器要在第二段（註冊與登入）就做出來，不再等到 MCP 那一段。第一段的 challenge 簽章驗證（`src/auth.ts`）與 helper（`src/scripts.ts`）都會被換掉，README 裡的安裝說明與 git 版本需求也要跟著改。
