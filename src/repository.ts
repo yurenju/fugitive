@@ -3,6 +3,7 @@
 // together with its data (spec #24).
 import { DurableObject } from "cloudflare:workers";
 import { commitGc, prepareGc } from "./gc";
+import { errorText, logFailure } from "./log";
 import { ZERO_OID } from "./objects";
 import { concat, FLUSH, parsePackets, pkt, ProtocolError } from "./pktline";
 import { receivePack, RECEIVE_CAPABILITIES } from "./receive";
@@ -123,7 +124,7 @@ export class RepositoryObject extends DurableObject<Env> {
       Object.assign(log, plan.stats);
     } catch (e) {
       log.result = "failed";
-      log.error = e instanceof Error ? (e.stack ?? e.message) : String(e);
+      log.error = errorText(e);
       throw e;
     } finally {
       console.log(JSON.stringify(log));
@@ -208,9 +209,15 @@ async function startStream(gen: AsyncGenerator<Uint8Array>): Promise<ReadableStr
       else controller.enqueue(first.value);
     },
     async pull(controller) {
-      const next = await gen.next();
-      if (next.done) controller.close();
-      else controller.enqueue(next.value);
+      try {
+        const next = await gen.next();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      } catch (e) {
+        // The response already started, so git only sees it stop; this line is the only trace left.
+        logFailure("upload-pack-stream", e);
+        controller.error(e);
+      }
     },
     async cancel() {
       await gen.return(undefined);

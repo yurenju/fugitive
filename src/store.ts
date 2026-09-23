@@ -1,6 +1,7 @@
 // A Repository's data (ADR 0003): pushed packs are kept as-is, small ones in SQLite and large ones in R2.
 // SQLite also holds the index (which pack and offset each object is at) and the refs.
 import { Inflate, inflate } from "pako";
+import { logFailure } from "./log";
 import { applyDelta, CODE_TYPE, type ObjectType } from "./objects";
 
 /** Packs are stored in SQLite as 1 MB rows; reads use 1 MB blocks for both backends. */
@@ -323,7 +324,7 @@ export class Store {
     this.sql.exec("DELETE FROM push_references");
     this.indexing = packId;
     const keys = stale.filter((p) => p.location === "r2").map((p) => this.r2Key(p.id));
-    if (keys.length) await this.bucket.delete(keys).catch(() => {});
+    if (keys.length) await this.bucket.delete(keys).catch((e) => logFailure("r2-delete", e, { packs: keys.length }));
   }
 
   /** Delete a pack's rows (not its R2 file). */
@@ -525,7 +526,7 @@ export class Store {
     this.forgetPack(packId);
     if (this.indexing === packId) this.indexing = -1;
     if (this.gcPack === packId) this.gcPack = -1;
-    if (location === "r2") await this.bucket.delete(this.r2Key(packId)).catch(() => {});
+    if (location === "r2") await this.bucket.delete(this.r2Key(packId)).catch((e) => logFailure("r2-delete", e, { packId }));
   }
 }
 
@@ -625,7 +626,8 @@ class R2PackWriter implements PackWriter {
   }
 
   async abort() {
-    await this.upload?.abort().catch(() => {});
+    // An abort that fails leaves an incomplete multipart upload in R2, billed until the bucket's rules clear it.
+    await this.upload?.abort().catch((e) => logFailure("r2-abort", e, { packId: this.id }));
     await this.store.discardPack(this.id);
   }
 }

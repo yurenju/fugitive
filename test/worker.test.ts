@@ -7,8 +7,9 @@ import { beforeAll, describe, expect, inject, it, vi } from "vitest";
 import { commitGc, prepareGc } from "../src/gc";
 import { applyDelta, bytesToHex, CODE_TYPE, hashObject, ZERO_OID, type ObjectType } from "../src/objects";
 import { concat, DELIM, FLUSH, parsePackets, pkt } from "../src/pktline";
+import { receivePack, UnpackError } from "../src/receive";
 import type { RepositoryObject } from "../src/repository";
-import type { Store } from "../src/store";
+import { StoreError, type Store } from "../src/store";
 import { basic, call, emails, signUp, type SignedUp } from "./helpers";
 
 const fx = inject("fixtures");
@@ -176,6 +177,57 @@ describe("push", () => {
       "ng refs/heads/nothing missing object",
     ]);
     expect(await lsRefs(repository)).toEqual({ HEAD: c1, "refs/heads/main": c1 });
+  });
+});
+
+describe("unpack failures", () => {
+  const streamOf = (bytes: Uint8Array) =>
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(bytes);
+        c.close();
+      },
+    });
+
+  /** Drive receivePack with a Store that fails the way the given error describes. */
+  async function reportFor(failure: Error): Promise<string[]> {
+    const store = {
+      createPack() {
+        throw failure;
+      },
+    } as unknown as Store;
+    const body = concat([pkt(`${ZERO_OID} ${c1} refs/heads/main\0report-status\n`), FLUSH, basePack]);
+    const { report } = await receivePack(store, streamOf(body), body.length);
+    return parsePackets(report)
+      .packets.filter((p) => p.kind === "data")
+      .map((p) => (p as { line: string }).line.trim());
+  }
+
+  it("logs a failure that is not the pack's fault and tells git the push can be retried", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const lines = await reportFor(new Error("Connection closed: this Durable Object instance is no longer active."));
+    expect(lines[0]).toMatch(/^unpack retry: /);
+    expect(lines[0]).toContain("no longer active");
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
+  it("reports a bad pack as the pack's own fault, with no retry hint", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const lines = await reportFor(new UnpackError("pack checksum mismatch"));
+    expect(lines[0]).toBe("unpack pack checksum mismatch");
+    expect(logged).not.toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
+  // StoreError covers our storage failing as well as a corrupt pack, so it must not be taken for the
+  // client's fault: "pack 7 missing in R2" read as a bad pack is the failure this whole path is about.
+  it("treats a storage failure as ours, since StoreError cannot say whose fault it is", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const lines = await reportFor(new StoreError("pack 7 missing in R2"));
+    expect(lines[0]).toBe("unpack retry: pack 7 missing in R2");
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
   });
 });
 
