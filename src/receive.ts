@@ -1,5 +1,6 @@
 // push (receive-pack): receive the pack, index it, check connectivity, and only then move refs.
 import { createHash } from "node:crypto";
+import { logFailure } from "./log";
 import {
   applyDelta,
   bytesToHex,
@@ -336,7 +337,17 @@ export async function receivePack(
       packId = await ingestPack(store, reader.rest(), contentLength, yieldEvery);
     } catch (e) {
       // Whatever layer a bad pack fails in, report it to git through the protocol rather than as HTTP 500.
-      unpackError = e instanceof Error ? e.message : String(e);
+      const message = e instanceof Error ? e.message : String(e);
+      // Only an UnpackError is known to be the client's pack. StoreError is not a boundary: it covers both
+      // a corrupt pack and our own storage failing (a pack missing from R2, an index row pointing nowhere),
+      // and cannot tell them apart. So everything else goes below, where it is logged and marked retryable:
+      // saying "retry" about a bad pack costs one wasted push, while staying quiet about our own failure is
+      // the bug this catch had in the first place -- git's terminal was the only copy of those errors.
+      if (e instanceof UnpackError) unpackError = message;
+      else {
+        logFailure("unpack", e);
+        unpackError = `retry: ${message}`;
+      }
     }
   } else {
     for await (const _ of reader.rest());
